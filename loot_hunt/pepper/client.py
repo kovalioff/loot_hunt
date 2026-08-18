@@ -58,8 +58,12 @@ class PepperClient:
             response = await asyncio.to_thread(self._get, url)
             return response.text
 
-    async def search(self, query: str, *, page: int = 1) -> list[Offer]:
+    async def search(
+        self, query: str, *, page: int = 1, group_id: str | None = None
+    ) -> list[Offer]:
         url = f"{BASE_URL}/search?q={quote(query)}"
+        if group_id:
+            url += f"&groups={quote(group_id)}"
         if page > 1:
             url += f"&page={page}"
         return await self._listing(url)

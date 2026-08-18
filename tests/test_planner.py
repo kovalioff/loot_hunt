@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from loot_hunt.search.models import GeminiPlan, PlannedQuery
+from loot_hunt.search.models import GeminiPlan, GeminiPlannedQuery
 from loot_hunt.search.planner import SearchPlanner
 
 
@@ -30,7 +30,13 @@ async def test_structured_one_call_dedupes_and_caps(monkeypatch):
     parsed = GeminiPlan(
         intent="travel",
         queries=[
-            PlannedQuery(query=value)
+            GeminiPlannedQuery(
+                query=value,
+                label=value.removeprefix("wakacje "),
+                category="travel",
+                required_terms=[value.removeprefix("wakacje ")],
+                object_terms=[],
+            )
             for value in [
                 "wakacje Hiszpania",
                 "wakacje Grecja",
@@ -48,7 +54,30 @@ async def test_structured_one_call_dedupes_and_caps(monkeypatch):
     plan = await planner.plan("ищу отдых в европе")
     assert models.calls == 1 and planner.calls == 1
     assert len(plan.queries) == 7
+    assert len(plan.queries) <= 8
     assert plan.queries[0].query == "wakacje Hiszpania"
+    assert all(item.category == "travel" for item in plan.queries)
+    assert all(item.required_terms for item in plan.queries)
+
+
+async def test_exact_sku_provider_plan_stays_narrow(monkeypatch):
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    parsed = GeminiPlan(
+        intent="exact product",
+        queries=[
+            GeminiPlannedQuery(
+                query="Makita DDF484",
+                label="Makita DDF484",
+                required_terms=["DDF484"],
+                object_terms=[],
+            )
+        ],
+    )
+    models = FakeModels(SimpleNamespace(parsed=parsed, text=""))
+    planner = SearchPlanner("injected", client=SimpleNamespace(models=models))
+    plan = await planner.plan("Makita DDF484")
+    assert models.calls == 1 and planner.calls == 1
+    assert [item.query for item in plan.queries] == ["Makita DDF484"]
 
 
 async def test_malformed_provider_response_falls_back(monkeypatch):
