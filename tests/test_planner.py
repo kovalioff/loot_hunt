@@ -142,3 +142,58 @@ async def test_malformed_provider_response_falls_back(monkeypatch):
     plan = await SearchPlanner("injected", client=SimpleNamespace(models=models)).plan("sony xm5")
     assert models.calls == 1
     assert [item.query for item in plan.queries] == ["sony xm5"]
+
+
+async def test_provider_wire_semantics_become_typed_global_plan(monkeypatch):
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    parsed = GeminiPlan(
+        intent="broad",
+        object_class="kurtka :: kurtka | płaszcz",
+        sort_mode="fresh",
+        hard_constraints=["waterproof :: wodoodporna | przeciwdeszczowa :: polarowa"],
+        soft_preferences=["good :: polecana"],
+        core_concepts=["outdoor use :: trekking | outdoor"],
+        exclusions=["used :: używana"],
+        geography=None,
+        queries=[
+            GeminiPlannedQuery(
+                query="kurtka trekkingowa",
+                label="Trekking",
+                category="fashion",
+                generated_expansions=["trekkingowa"],
+                supports_core_concepts=["outdoor use :: trekking | outdoor"],
+            )
+        ],
+    )
+    planner = SearchPlanner(
+        "injected", client=SimpleNamespace(models=FakeModels(SimpleNamespace(parsed=parsed)))
+    )
+    plan = await planner.plan("непромокаемая куртка")
+    assert plan.object_class and plan.object_class.evidence_terms == ["kurtka", "płaszcz"]
+    assert plan.hard_constraints[0].name == "waterproof"
+    assert plan.hard_constraints[0].conflict_terms == ["polarowa"]
+    assert plan.queries[0].supports_core_concepts == ["outdoor use"]
+
+
+async def test_provider_cannot_invent_unstated_temporal_year(monkeypatch):
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    parsed = GeminiPlan(
+        intent="category",
+        sort_mode="cheap",
+        temporal={
+            "required": True,
+            "start_date": "2024-09-01",
+            "end_date": "2024-09-30",
+            "month": 9,
+            "year": 2024,
+        },
+        queries=[GeminiPlannedQuery(query="loty wrzesień", label="Wrzesień")],
+    )
+    planner = SearchPlanner(
+        "injected", client=SimpleNamespace(models=FakeModels(SimpleNamespace(parsed=parsed)))
+    )
+    plan = await planner.plan("куда слетать в сентябре")
+    assert plan.temporal
+    assert plan.temporal.month == 9
+    assert plan.temporal.year is None
+    assert plan.temporal.start_date is None and plan.temporal.end_date is None

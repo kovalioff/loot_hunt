@@ -1,7 +1,12 @@
 from datetime import UTC, datetime, timedelta
 
 from loot_hunt.pepper.models import Offer
-from loot_hunt.search.models import PlannedQuery, SearchPlan
+from loot_hunt.search.models import (
+    PlannedQuery,
+    SearchPlan,
+    SemanticConstraint,
+    TemporalConstraint,
+)
 from loot_hunt.search.service import MAX_PEPPER_REQUESTS, SearchService
 
 
@@ -315,3 +320,46 @@ async def test_enriched_title_is_rechecked_before_display():
     pepper = EnrichingPepper({("ekspres", 1): [listing], ("ekspres", 2): []})
     result = await SearchService(Planner(plan), pepper).search("кофемашина")
     assert result.offers == []
+
+
+async def test_cheap_sort_happens_only_after_global_hard_constraints():
+    plan = SearchPlan(
+        original_query="monitor 27",
+        intent="broad",
+        object_class=SemanticConstraint(name="monitor", evidence_terms=["monitor"]),
+        hard_constraints=[SemanticConstraint(name="27 inch", evidence_terms=["27"])],
+        sort_mode="cheap",
+        queries=[PlannedQuery(query="monitor 27", category="electronics")],
+    )
+    offers = [
+        Offer("wrong", 'Monitor 24"', current_price=100, category="Elektronika"),
+        Offer("right", 'Monitor 27"', current_price=500, category="Elektronika"),
+    ]
+    pepper = Pepper({("monitor 27", 1): offers, ("monitor 27", 2): []})
+    result = await SearchService(Planner(plan), pepper).search("monitor 27")
+    assert [item.thread_id for item in result.offers] == ["right"]
+
+
+async def test_enriched_merchant_url_can_reject_wrong_explicit_month():
+    plan = SearchPlan(
+        original_query="September travel",
+        intent="category",
+        temporal=TemporalConstraint(required=True, month=9),
+        queries=[PlannedQuery(query="wakacje", label="wakacje", category="travel")],
+    )
+
+    class DatedPepper(Pepper):
+        async def enrich(self, offer):
+            return Offer(
+                offer.thread_id,
+                offer.title,
+                category=offer.category,
+                merchant_url="https://travel.example/?dateOut=2026-10-12",
+            )
+
+    listing = Offer("trip", "Wakacje all inclusive", category="Podróże")
+    pepper = DatedPepper({("wakacje", 1): [listing], ("wakacje", 2): []})
+    result = await SearchService(Planner(plan), pepper).search("September travel")
+    assert result.offers == []
+    assert result.debug
+    assert result.debug.offers["trip"].temporal_status == "CONFLICT"

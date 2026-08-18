@@ -85,11 +85,6 @@ class TelegramHandlers:
         try:
             result = await self.search.search(message.text)
             await self.database.upsert_offers(result.offers)
-            if not result.offers:
-                await status.edit_text(
-                    "Активных предложений не найдено. Попробуйте изменить запрос."
-                )
-                return
             session_id = await self.database.create_session(
                 message.from_user.id,
                 message.text,

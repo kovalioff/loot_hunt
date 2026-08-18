@@ -50,10 +50,16 @@ class RequestDebug:
 class OfferDebug:
     thread_id: str
     title: str
+    source_query: str
+    source_kind: str
+    page: int
     accepted: bool
     score: float
     reasons: tuple[str, ...]
     rejection: str | None
+    hard_status: str
+    temporal_status: str
+    core_evidence: tuple[str, ...]
 
 
 @dataclass(slots=True)
@@ -87,6 +93,7 @@ class _Candidate:
     evaluation: RelevanceResult
     source_query: str
     source_kind: str
+    page: int
 
 
 class SearchUnavailable(RuntimeError):
@@ -181,15 +188,25 @@ class SearchService:
         for original, value in zip(selected, enriched, strict=True):
             enriched_offer = original.offer if isinstance(value, BaseException) else value
             selected_plan, evaluation = self._final_evaluation(
-                enriched_offer, plan, original.source_kind
+                enriched_offer, plan, original.source_kind, original.source_query
+            )
+            self._record_debug(
+                enriched_offer,
+                evaluation,
+                debug,
+                original.source_query,
+                original.source_kind,
+                original.page,
+                replace=True,
             )
             if evaluation.accepted:
                 final_candidates.append(
                     _Candidate(
                         enriched_offer,
                         evaluation,
-                        selected_plan.label or selected_plan.query,
+                        original.source_query or selected_plan.label or selected_plan.query,
                         original.source_kind,
+                        original.page,
                     )
                 )
         final = self._rank(final_candidates, plan)[: self.cap]
@@ -223,11 +240,14 @@ class SearchService:
             if source == "search-object":
                 compatible = [item for item in plan.queries if item.category == planned.category]
                 selected_plan, evaluation = max(
-                    ((item, evaluate_offer(offer, item, plan)) for item in compatible),
+                    (
+                        (item, evaluate_offer(offer, item, plan, source_kind=source))
+                        for item in compatible
+                    ),
                     key=lambda pair: pair[1].score,
                 )
             else:
-                evaluation = evaluate_offer(offer, planned, plan)
+                evaluation = evaluate_offer(offer, planned, plan, source_kind=source)
             if (
                 evaluation.accepted
                 and plan.intent == "broad"
@@ -261,6 +281,7 @@ class SearchService:
                 debug,
                 selected_plan.label or selected_plan.query,
                 source,
+                page,
             )
             accepted += evaluation.accepted
         debug.requests.append(
@@ -285,7 +306,10 @@ class SearchService:
                 continue
             raw_ids.add(offer.thread_id)
             considered += 1
-            evaluations = [evaluate_offer(offer, item, plan) for item in planned_queries]
+            evaluations = [
+                evaluate_offer(offer, item, plan, source_kind="category")
+                for item in planned_queries
+            ]
             position, evaluation = max(enumerate(evaluations), key=lambda item: item[1].score)
             if evaluation.accepted and (
                 (
@@ -310,6 +334,7 @@ class SearchService:
                 debug,
                 selected.label or selected.query,
                 "category",
+                1,
             )
             accepted += evaluation.accepted
         debug.requests.append(
@@ -331,24 +356,46 @@ class SearchService:
         debug: SearchDebug,
         source_query: str,
         source_kind: str,
+        page: int,
+    ) -> None:
+        SearchService._record_debug(offer, evaluation, debug, source_query, source_kind, page)
+        current = candidates.get(offer.thread_id)
+        if evaluation.accepted and (current is None or evaluation.score > current.evaluation.score):
+            candidates[offer.thread_id] = _Candidate(
+                offer, evaluation, source_query, source_kind, page
+            )
+
+    @staticmethod
+    def _record_debug(
+        offer: Offer,
+        evaluation: RelevanceResult,
+        debug: SearchDebug,
+        source_query: str,
+        source_kind: str,
+        page: int,
+        *,
+        replace: bool = False,
     ) -> None:
         previous = debug.offers.get(offer.thread_id)
-        if previous is None or evaluation.score > previous.score:
+        if replace or previous is None or evaluation.score >= previous.score:
             debug.offers[offer.thread_id] = OfferDebug(
                 offer.thread_id,
                 offer.title,
+                source_query,
+                source_kind,
+                page,
                 evaluation.accepted,
                 evaluation.score,
                 evaluation.reasons,
                 evaluation.rejection,
+                evaluation.hard_status,
+                evaluation.temporal_status,
+                evaluation.core_evidence,
             )
-        current = candidates.get(offer.thread_id)
-        if evaluation.accepted and (current is None or evaluation.score > current.evaluation.score):
-            candidates[offer.thread_id] = _Candidate(offer, evaluation, source_query, source_kind)
 
     @staticmethod
     def _final_evaluation(
-        offer: Offer, plan: SearchPlan, source_kind: str
+        offer: Offer, plan: SearchPlan, source_kind: str, source_query: str
     ) -> tuple[PlannedQuery, RelevanceResult]:
         object_values = [normalize(value) for item in plan.queries for value in item.object_terms]
 
@@ -371,7 +418,14 @@ class SearchService:
         evaluations = []
         for item in plan.queries:
             merged = item.model_copy(update={"excluded_terms": exclusions})
-            evaluation = evaluate_offer(offer, merged, plan)
+            evaluation = evaluate_offer(
+                offer,
+                merged,
+                plan,
+                source_kind=(
+                    source_kind if (item.label or item.query) == source_query else "cross-query"
+                ),
+            )
             if (
                 evaluation.accepted
                 and plan.intent == "broad"
@@ -404,18 +458,25 @@ class SearchService:
         if model_terms:
             return retrievals
         seen = {item.query.casefold() for item in plan.queries}
+        global_hard = [
+            item.evidence_terms[0] for item in plan.hard_constraints if item.evidence_terms
+        ]
+        global_objects = plan.object_class.evidence_terms if plan.object_class else []
         for item in plan.queries:
-            if not item.required_terms or not item.object_terms or len(retrievals) >= 8:
+            hard = item.required_terms or global_hard
+            objects = item.object_terms or global_objects
+            if not hard or not objects or len(retrievals) >= 8:
                 continue
-            relaxed = " ".join([item.object_terms[0], *item.required_terms])
+            relaxed = " ".join([objects[0], *hard])
             if relaxed.casefold() in seen:
                 continue
             seen.add(relaxed.casefold())
             retrievals.append((item.model_copy(update={"query": relaxed}), "search-relaxed"))
         for item in plan.queries:
-            if not item.object_terms or len(retrievals) >= 8:
+            objects = item.object_terms or global_objects
+            if not objects or len(retrievals) >= 8:
                 continue
-            object_query = item.object_terms[0]
+            object_query = objects[0]
             if object_query.casefold() in seen:
                 continue
             seen.add(object_query.casefold())

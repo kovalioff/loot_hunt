@@ -1,6 +1,6 @@
 from loot_hunt.database import Database
 from loot_hunt.pepper.models import Offer
-from loot_hunt.search.models import PlannedQuery, SearchPlan
+from loot_hunt.search.models import PlannedQuery, SearchPlan, SemanticConstraint, TemporalConstraint
 from loot_hunt.watch.service import WatcherService
 
 
@@ -64,5 +64,31 @@ async def test_watcher_reuses_plan_and_only_new_ids(tmp_path):
         assert sorted(notifications) == ["category-new", "new"]
         assert first == {"checked": 2, "notifications": 2, "errors": 0}
         assert second["notifications"] == 0
+    finally:
+        await db.close()
+
+
+async def test_zero_result_subscription_has_empty_baseline_and_keeps_semantics(tmp_path):
+    db = Database(tmp_path / "empty.db")
+    await db.connect()
+    try:
+        plan = SearchPlan(
+            original_query="rare waterproof item",
+            intent="broad",
+            hard_constraints=[
+                SemanticConstraint(name="waterproof", evidence_terms=["wodoodporny"])
+            ],
+            temporal=TemporalConstraint(required=True, month=9),
+            queries=[PlannedQuery(query="rzadki przedmiot wodoodporny")],
+        )
+        identifier = await db.create_subscription(9, "search", "rare", "rare", [], plan)
+        cursor = await db.db.execute(
+            "SELECT count(*) FROM subscription_seen_threads WHERE subscription_id=?",
+            (identifier,),
+        )
+        assert (await cursor.fetchone())[0] == 0
+        row = (await db.subscriptions(9))[0]
+        restored = SearchPlan.model_validate_json(row["plan_json"])
+        assert restored == plan
     finally:
         await db.close()

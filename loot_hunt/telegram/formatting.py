@@ -73,6 +73,12 @@ def _merchant_url(value: str | None) -> str | None:
 
 
 def results_text(offers: list[Offer], total: int, page: int, timezone: str) -> str:
+    if total == 0:
+        return (
+            "Активных предложений сейчас нет.\n\n"
+            "🔔 Можно включить отслеживание — я сообщу, когда появится "
+            "подходящее предложение."
+        )
     start = page * 5
     cards = [
         offer_card(item, timezone, number=start + index + 1) for index, item in enumerate(offers)
