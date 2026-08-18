@@ -17,11 +17,11 @@ logger = logging.getLogger(__name__)
 
 START_TEXT = """<b>Loot Hunt</b> ищет активные предложения на Pepper.pl.
 
-Напишите, что хотите найти — можно обычными словами. Например:
-«хочу OLED телевизор 65 дюймов» или «куда недорого слетать в сентябре».
+Откройте «🔎 Найти предложения»: там можно написать запрос обычными словами
+или выбрать категорию из актуального каталога Pepper.
 
-Я покажу свежие предложения и прямые ссылки магазинов.
-Любой поиск или категорию можно отслеживать."""
+На странице результатов нажмите «🔔 Отслеживать этот поиск».
+Сохранёнными поисками можно управлять через «📋 Мои подписки»."""
 
 
 class TelegramHandlers:
@@ -46,7 +46,6 @@ class TelegramHandlers:
         router = self.router
         router.message.register(self.start, CommandStart())
         router.message.register(self.ask_search, F.text == "🔎 Найти предложения")
-        router.message.register(self.categories, F.text == "🔔 Отслеживание")
         router.message.register(self.subscriptions, F.text == "📋 Мои подписки")
         router.message.register(self.help, F.text == "❓ Помощь")
         router.message.register(self.stats, F.text == "📊 Статистика")
@@ -64,16 +63,19 @@ class TelegramHandlers:
 
     async def ask_search(self, message: Message) -> None:
         await message.answer(
-            "Опишите, что найти. Например:\n\n"
-            "sony xm5\nOLED телевизор 65 дюймов\n"
-            "куда недорого слетать в сентябре\nинструменты makita"
+            "Что хотите найти?\n\n"
+            "Можно написать запрос обычными словами:\n\n"
+            "«дешёвый монитор»\n«куда слетать в сентябре»\n«робот-пылесос»\n\n"
+            "Или выбрать категорию:",
+            reply_markup=categories_keyboard(self.catalog),
         )
 
     async def help(self, message: Message) -> None:
         await message.answer(
-            "Просто отправьте запрос. Показываю только активные Pepper-предложения; "
-            "кнопка покупки ведёт в магазин. Через «Отслеживание» можно смотреть "
-            "категории, через «Мои подписки» — управлять мониторингом."
+            "Откройте «🔎 Найти предложения», напишите запрос или выберите категорию "
+            "Pepper. Магазин открывается нажатием на его название. На результатах можно "
+            "включить «🔔 Отслеживать этот поиск», а через «📋 Мои подписки» — поставить "
+            "поиск на паузу, возобновить или удалить."
         )
 
     async def search_text(self, message: Message) -> None:
@@ -100,11 +102,13 @@ class TelegramHandlers:
             logger.exception("Interactive search failed")
             await status.edit_text("Pepper временно недоступен. Попробуйте ещё раз немного позже.")
 
-    async def _render(self, message: Message, session_id: str, offers, page: int) -> None:
+    async def _render(
+        self, message: Message, session_id: str, offers, page: int, *, watch: bool = True
+    ) -> None:
         selected = self.search.page(offers, page)
         await message.edit_text(
             results_text(selected, len(offers), page, self.settings.timezone),
-            reply_markup=result_keyboard(session_id, selected, page, len(offers)),
+            reply_markup=result_keyboard(session_id, selected, page, len(offers), watch=watch),
         )
 
     async def paginate(self, callback: CallbackQuery) -> None:
@@ -113,7 +117,13 @@ class TelegramHandlers:
         if not session or not callback.message:
             await callback.answer("Поиск устарел. Выполните его снова.", show_alert=True)
             return
-        await self._render(callback.message, session_id, session["offers"], int(raw_page))
+        await self._render(
+            callback.message,
+            session_id,
+            session["offers"],
+            int(raw_page),
+            watch=session["plan"].intent != "category",
+        )
         await callback.answer()
 
     async def watch_search(self, callback: CallbackQuery) -> None:
@@ -181,14 +191,7 @@ class TelegramHandlers:
                 offers,
                 self.settings.search_session_ttl_seconds,
             )
-            buttons = result_keyboard(session_id, offers[:5], 0, len(offers))
-            buttons.inline_keyboard[-2] = [
-                InlineKeyboardButton(text="🔔 Отслеживать", callback_data=f"wc:{session_id}:{key}")
-            ]
-            await callback.message.edit_text(
-                results_text(offers[:5], len(offers), 0, self.settings.timezone),
-                reply_markup=buttons,
-            )
+            await self._render(callback.message, session_id, offers, 0, watch=False)
             await callback.answer()
         except Exception:
             logger.exception("Category browse failed")

@@ -8,7 +8,6 @@ import signal
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from .config import Settings
 from .database import Database
@@ -17,6 +16,7 @@ from .search.planner import SearchPlanner
 from .search.service import SearchService
 from .telegram.formatting import offer_card
 from .telegram.handlers import TelegramHandlers
+from .telegram.keyboards import notification_keyboard
 from .watch.service import WatcherService
 
 
@@ -43,22 +43,10 @@ async def run() -> None:
     await handlers.refresh_catalog()
 
     async def notify(user_id: int, subscription_id: int, offer) -> None:
-        buttons = []
-        if offer.merchant_url:
-            buttons.append(
-                [InlineKeyboardButton(text="🛒 Открыть предложение", url=offer.merchant_url)]
-            )
-        buttons.append(
-            [
-                InlineKeyboardButton(
-                    text="🔕 Отключить отслеживание", callback_data=f"sub:pause:{subscription_id}"
-                )
-            ]
-        )
         await bot.send_message(
             user_id,
             "🆕 <b>Новое предложение</b>\n\n" + offer_card(offer, settings.timezone),
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+            reply_markup=notification_keyboard(subscription_id),
         )
 
     watcher = WatcherService(database, search, pepper, notify)

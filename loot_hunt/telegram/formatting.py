@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 from datetime import datetime
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 from loot_hunt.pepper.models import Offer
@@ -48,13 +49,27 @@ def offer_card(offer: Offer, timezone: str, *, number: int | None = None) -> str
         if offer.discount is not None:
             price += f" · −{offer.discount:g}%"
         lines.append(price)
-    if offer.merchant:
-        lines.append(f"🏪 {html.escape(offer.merchant)}")
+    merchant_url = _merchant_url(offer.merchant_url)
+    merchant = html.escape(offer.merchant) if offer.merchant else None
+    if merchant_url:
+        label = merchant or "Открыть в магазине"
+        lines.append(f'🏪 <a href="{html.escape(merchant_url, quote=True)}">{label}</a>')
+    elif merchant:
+        lines.append(f"🏪 {merchant}")
     if date := natural_date(offer.published_at, timezone):
         lines.append(f"📅 {date}")
     if offer.coupon_code:
         lines.append(f"🎟 Код: <code>{html.escape(offer.coupon_code)}</code>")
     return "\n".join(lines)
+
+
+def _merchant_url(value: str | None) -> str | None:
+    if not value:
+        return None
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    return None if parsed.hostname and parsed.hostname.endswith("pepper.pl") else value
 
 
 def results_text(offers: list[Offer], total: int, page: int, timezone: str) -> str:

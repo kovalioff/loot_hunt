@@ -13,7 +13,7 @@ from loot_hunt.pepper.models import Offer
 
 def main_menu(admin: bool = False) -> ReplyKeyboardMarkup:
     rows = [
-        [KeyboardButton(text="🔎 Найти предложения"), KeyboardButton(text="🔔 Отслеживание")],
+        [KeyboardButton(text="🔎 Найти предложения")],
         [KeyboardButton(text="📋 Мои подписки"), KeyboardButton(text="❓ Помощь")],
     ]
     if admin:
@@ -22,12 +22,9 @@ def main_menu(admin: bool = False) -> ReplyKeyboardMarkup:
 
 
 def result_keyboard(
-    session_id: str, offers: list[Offer], page: int, total: int
+    session_id: str, _offers: list[Offer], page: int, total: int, *, watch: bool = True
 ) -> InlineKeyboardMarkup:
     rows = []
-    for index, offer in enumerate(offers, start=page * 5 + 1):
-        if offer.merchant_url:
-            rows.append([InlineKeyboardButton(text=f"🛒 Открыть #{index}", url=offer.merchant_url)])
     navigation = []
     if page:
         navigation.append(
@@ -39,16 +36,15 @@ def result_keyboard(
         )
     if navigation:
         rows.append(navigation)
-    rows.extend(
-        [
+    if watch:
+        rows.append(
             [
                 InlineKeyboardButton(
                     text="🔔 Отслеживать этот поиск", callback_data=f"ws:{session_id}"
                 )
-            ],
-            [InlineKeyboardButton(text="🔎 Новый поиск", callback_data="new")],
-        ]
-    )
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="🔎 Новый поиск", callback_data="new")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -66,5 +62,18 @@ def subscription_actions(identifier: int, active: bool) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [InlineKeyboardButton(text=toggle[0], callback_data=f"sub:{toggle[1]}:{identifier}")],
             [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"sub:delete:{identifier}")],
+        ]
+    )
+
+
+def notification_keyboard(subscription_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🔕 Отключить отслеживание",
+                    callback_data=f"sub:pause:{subscription_id}",
+                )
+            ]
         ]
     )

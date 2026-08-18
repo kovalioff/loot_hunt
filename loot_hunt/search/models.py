@@ -20,6 +20,7 @@ CategoryScope = Literal[
     "telecom",
     "services",
 ]
+SortMode = Literal["fresh", "cheap", "hot"]
 
 
 class PlannedQuery(BaseModel):
@@ -28,11 +29,14 @@ class PlannedQuery(BaseModel):
     category: CategoryScope | None = None
     required_terms: list[str] = Field(default_factory=list, max_length=4)
     object_terms: list[str] = Field(default_factory=list, max_length=3)
+    soft_terms: list[str] = Field(default_factory=list, max_length=6)
+    excluded_terms: list[str] = Field(default_factory=list, max_length=6)
 
 
 class SearchPlan(BaseModel):
     original_query: str = ""
     intent: str = Field(default="search", max_length=40)
+    sort_mode: SortMode = "fresh"
     queries: list[PlannedQuery] = Field(min_length=1, max_length=8)
 
 
@@ -40,10 +44,13 @@ class GeminiPlannedQuery(BaseModel):
     query: str = Field(min_length=1, max_length=120)
     label: str = Field(min_length=1, max_length=50)
     category: CategoryScope | None = None
-    required_terms: list[str] = Field(min_length=1, max_length=4)
+    required_terms: list[str] = Field(max_length=4)
     object_terms: list[str] = Field(max_length=3)
+    soft_terms: list[str] = Field(max_length=6)
+    excluded_terms: list[str] = Field(max_length=6)
 
 
 class GeminiPlan(BaseModel):
-    intent: str = Field(default="search", max_length=40)
+    intent: Literal["exact", "broad", "category"]
+    sort_mode: SortMode
     queries: list[GeminiPlannedQuery] = Field(min_length=1, max_length=8)

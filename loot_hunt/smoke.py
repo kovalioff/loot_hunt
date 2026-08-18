@@ -7,6 +7,7 @@ import json
 from .config import Settings
 from .pepper.client import PepperClient
 from .search.planner import SearchPlanner
+from .search.service import SearchService
 
 
 async def smoke(kind: str, value: str) -> None:
@@ -27,16 +28,33 @@ async def smoke(kind: str, value: str) -> None:
         elif kind == "detail":
             offer = await pepper.details(value)
             print(offer.to_dict() if offer else "detail_not_found")
-        else:
+        elif kind == "gemini":
             plan = await SearchPlanner(settings.gemini_api_key).plan(value)
             print(plan.model_dump_json(indent=2))
+        else:
+            planner = SearchPlanner(settings.gemini_api_key)
+            result = await SearchService(planner, pepper, cap=settings.search_result_cap).search(
+                value
+            )
+            print(
+                json.dumps(
+                    {
+                        "gemini_calls": planner.calls,
+                        "plan": result.plan.model_dump(),
+                        "debug": result.debug.to_dict() if result.debug else None,
+                        "final": [item.to_dict() for item in result.offers],
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
     finally:
         await pepper.close()
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Optional live Loot Hunt smoke tests")
-    parser.add_argument("kind", choices=("search", "category", "detail", "gemini"))
+    parser.add_argument("kind", choices=("search", "category", "detail", "gemini", "explain"))
     parser.add_argument("value")
     args = parser.parse_args()
     asyncio.run(smoke(args.kind, args.value))
