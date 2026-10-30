@@ -32,6 +32,9 @@ class Offer:
     fair_discount_pct: float | None = None
     is_fake_discount: bool = False
     specs: dict[str, str] = field(default_factory=dict)
+    image_url: str | None = None
+    shipping_price: float | None = None
+    shipping_free: bool | None = None
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)

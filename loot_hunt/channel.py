@@ -19,14 +19,14 @@ class ChannelPublisher:
         *,
         min_temperature: float = 300.0,
         timezone: str = "Europe/Warsaw",
-        bot_username: str = "loot_hunt_bot",
+        bot_username: str = "ulovio_bot",
         database: Any | None = None,
     ) -> None:
         self.bot = bot
         self.channel_id = channel_id
         self.min_temperature = min_temperature
         self.timezone = timezone
-        self.bot_username = bot_username.lstrip("@") or "loot_hunt_bot"
+        self.bot_username = bot_username.lstrip("@") or "ulovio_bot"
         self.database = database
         self._published_threads: set[str] = set()
 

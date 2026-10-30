@@ -15,7 +15,7 @@ from loot_hunt.platforms import PLATFORMS
 
 
 def referral_keyboard(
-    user_id: int, bot_username: str = "loot_hunt_bot"
+    user_id: int, bot_username: str = "ulovio_bot"
 ) -> InlineKeyboardMarkup:
     ref_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
     share_text = quote(

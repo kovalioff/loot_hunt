@@ -136,6 +136,19 @@ def _url_from(value: Any, base_url: str = BASE_URL) -> str | None:
     return url if parsed.scheme in {"http", "https"} and parsed.netloc else None
 
 
+def _image_url(raw: dict[str, Any], platform_code: str) -> str | None:
+    image = raw.get("mainImage")
+    hosts = {"pl": "static.pepper.pl", "de": "static.mydealz.de", "uk": "static.hotukdeals.com"}
+    if not isinstance(image, dict) or platform_code not in hosts:
+        return None
+    path, name = image.get("path"), image.get("name")
+    if not isinstance(path, str) or not re.fullmatch(r"threads/raw/[A-Za-z0-9_-]+", path):
+        return None
+    if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", name):
+        return None
+    return f"https://{hosts[platform_code]}/{path}/{name}/{name}.jpg"
+
+
 def normalize_offer(
     raw: dict[str, Any],
     pepper_url: str | None = None,
@@ -183,6 +196,10 @@ def normalize_offer(
     coupon = _text_from(_pick(raw, "voucherCode", "couponCode", "promoCode"))
     category = _text_from(_pick(raw, "group", "category", "mainGroup"))
     explicit_url = _url_from(_pick(raw, "url", "shareableLink"), base_url=resolved_base)
+    shipping = raw.get("shipping") if isinstance(raw.get("shipping"), dict) else {}
+    shipping_free = True if shipping.get("isFree") in (True, 1) else None
+    raw_shipping_price = number(shipping.get("price"))
+    shipping_price = 0.0 if shipping_free else raw_shipping_price if raw_shipping_price and raw_shipping_price > 0 else None
     parsed_entity = parse_title_entities(title, price=current, category_hint=category)
     return Offer(
         thread_id=thread_id,
@@ -206,6 +223,9 @@ def normalize_offer(
         forwarding_price_pln=platform.forwarding_price_pln,
         forwarding_url=platform.forwarding_url,
         specs=parsed_entity.specs,
+        image_url=_image_url(raw, platform.code),
+        shipping_price=shipping_price,
+        shipping_free=shipping_free,
     )
 
 

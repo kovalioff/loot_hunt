@@ -69,3 +69,21 @@ def test_structured_pepper_visit_url_is_accepted_for_resolution():
         }
     )
     assert offer and offer.merchant_url == "https://www.pepper.pl/visit/threadmain/1"
+
+
+def test_pepper_image_metadata_becomes_safe_regional_cdn_url():
+    raw = {"threadId": 1, "title": "Sony", "mainImage": {"path": "threads/raw/AbC12", "name": "123_1"}}
+    assert normalize_offer(raw).image_url == "https://static.pepper.pl/threads/raw/AbC12/123_1/123_1.jpg"
+    assert normalize_offer(raw, platform_code="de").image_url == "https://static.mydealz.de/threads/raw/AbC12/123_1/123_1.jpg"
+    raw["mainImage"]["path"] = "threads/raw/../../private"
+    assert normalize_offer(raw).image_url is None
+
+
+def test_shipping_is_unknown_unless_free_or_positive_price_is_explicit():
+    raw = {"threadId": 1, "title": "X", "shipping": {"isFree": None, "price": 0}}
+    assert normalize_offer(raw).shipping_price is None
+    raw["shipping"] = {"isFree": 1, "price": 0}
+    assert normalize_offer(raw).shipping_price == 0
+    assert normalize_offer(raw).shipping_free is True
+    raw["shipping"] = {"isFree": 0, "price": 19}
+    assert normalize_offer(raw).shipping_price == 19

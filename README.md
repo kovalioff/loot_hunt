@@ -1,6 +1,6 @@
-# Loot Hunt
+# Ulovio
 
-Loot Hunt is a Russian-language Telegram bot for Russian-speaking expats in Poland. It finds and monitors deals on Pepper.pl (PL), Mydealz.de (DE), and HotUKDeals (UK), so a deal found abroad can be bought there and delivered to Poland.
+Ulovio is a Russian-language Telegram bot for Russian-speaking expats in Poland. It finds and monitors deals on Pepper.pl (PL), Mydealz.de (DE), and HotUKDeals (UK), so a deal found abroad can be bought there and delivered to Poland.
 
 The bot searches individual deal threads, shows fresh offers in deterministic order, links to the merchant when the platform exposes a real destination, and alerts only for newly discovered thread IDs.
 
@@ -34,7 +34,7 @@ uv sync
 uv run loot-hunt
 ```
 
-Set `BOT_TOKEN`; `GEMINI_API_KEY` is optional. Without Gemini, or whenever Gemini fails, the deterministic planner maps the request to Polish queries and the search still works. Other useful settings are `BOT_USERNAME` (used in referral/share links; defaults to `loot_hunt_bot`), `DATABASE_PATH`, `WATCHER_INTERVAL_SECONDS` (default `3600`), `APP_TIMEZONE`, `LOG_LEVEL`, `DEALS_CHANNEL_ID`, `MIN_CHANNEL_TEMPERATURE`, and comma-separated `ADMIN_IDS`.
+Set `BOT_TOKEN`; `GEMINI_API_KEY` is optional. Without Gemini, or whenever Gemini fails, the deterministic planner maps the request to Polish queries and the search still works. Other useful settings are `BOT_USERNAME` (used in referral/share links; defaults to `ulovio_bot`), `DATABASE_PATH`, `WATCHER_INTERVAL_SECONDS` (default `3600`), `APP_TIMEZONE`, `LOG_LEVEL`, `DEALS_CHANNEL_ID`, `MIN_CHANNEL_TEMPERATURE`, and comma-separated `ADMIN_IDS`.
 
 ## Tests and live smoke checks
 

@@ -5,6 +5,8 @@ from datetime import UTC, datetime, timedelta
 
 from loot_hunt.platforms import Platform, get_platform
 
+from .product_intent import accessory_retrieval_query
+
 from .models import (
     CategoryScope,
     PlannedQuery,
@@ -267,7 +269,11 @@ class DeterministicSearchPlanner:
         target_category: CategoryScope | None = None
         queries: list[PlannedQuery] = []
 
-        for concept_name, config in ENTITY_ONTOLOGY.items():
+        accessory_query = accessory_retrieval_query(cleaned, target.code)
+        if accessory_query:
+            queries.append(PlannedQuery(query=accessory_query, category=None))
+
+        for concept_name, config in (() if queries else ENTITY_ONTOLOGY.items()):
             stems = config.get("stems", [])
             for stem_pattern in stems:
                 if re.search(stem_pattern, cleaned, re.IGNORECASE):

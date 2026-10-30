@@ -10,6 +10,7 @@ from urllib.parse import unquote
 from loot_hunt.pepper.models import Offer
 
 from .models import PlannedQuery, SearchPlan, SemanticConstraint, TemporalConstraint
+from .product_intent import infer_intent, mismatch, normalized
 
 TOKEN_RE = re.compile(r"[a-z0-9]+")
 POLISH_CHAR_MAP = str.maketrans({
@@ -115,6 +116,8 @@ def tokens(value: str | None) -> tuple[str, ...]:
 
 
 def _matches(anchor: str, haystack: set[str]) -> bool:
+    if anchor in {"ps4", "ps5"} and "playstation" in haystack and anchor[-1] in haystack:
+        return True
     if anchor in haystack:
         return True
     if month := MONTH_ANCHORS.get(anchor):
@@ -328,6 +331,8 @@ def evaluate_offer(
     """Apply global user semantics to every retrieval branch, then score relevance."""
     if offer.is_expired:
         return RelevanceResult(False, 0, (), "expired")
+    if reason := mismatch(plan.original_query, offer.title):
+        return RelevanceResult(False, 0, (), reason, "CONFLICT")
     if plan.intent == "fallback":
         return RelevanceResult(True, 1, ("direct fallback",))
 
@@ -528,6 +533,16 @@ def evaluate_offer(
     if query_matches:
         score += min(3, query_matches * 0.75)
         reasons.append(f"query {query_matches}")
+    accessory_intent = infer_intent(planned.query)
+    if plan.keyword_mode and accessory_intent.accessory and accessory_intent.accessory_span:
+        query_text = normalized(planned.query)
+        left, right = accessory_intent.accessory_span
+        target_terms = {term for term in tokens(query_text[:left] + " " + query_text[right:])
+                        if len(term) >= 3 and term not in GENERIC_TERMS and term not in {"fur", "for", "mit", "bez"}}
+        target_matches = sum(_matches(term, haystack) for term in target_terms)
+        if not target_terms or target_matches / len(target_terms) >= KEYWORD_ACCEPT_COVERAGE:
+            score = max(score, MIN_RELEVANCE_SCORE)
+            reasons.append("requested accessory type")
     if plan.keyword_mode and query_terms:
         coverage = query_matches / len(query_terms)
         if query_matches and coverage >= KEYWORD_ACCEPT_COVERAGE:

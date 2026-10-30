@@ -204,7 +204,7 @@ async def test_channel_publisher_auto_posts_hot_deals():
     bot.send_message.assert_awaited_once()
     post_text = bot.send_message.call_args[0][1]
     assert "PS5 Slim Console" in post_text
-    assert "@loot_hunt_bot" in post_text
+    assert "@ulovio_bot" in post_text
 
     # 3. Duplicate publish attempt should be prevented
     assert await publisher.maybe_publish(hot_offer) is False

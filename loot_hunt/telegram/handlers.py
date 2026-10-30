@@ -29,13 +29,13 @@ from .keyboards import (
 logger = logging.getLogger(__name__)
 
 START_TEXT = (
-    "<b>Loot Hunt</b> ищет предложения на Pepper.pl (PL), Mydealz.de (DE) и HotUKDeals (UK).\n\n"
+    "<b>Ulovio</b> ищет предложения на Pepper.pl (PL), Mydealz.de (DE) и HotUKDeals (UK).\n\n"
     "Откройте «🔎 Найти предложения»: там можно написать запрос обычными словами\n"
     "или выбрать категорию из актуального каталога.\n"
     "Сменить регион поиска можно командой /region.\n\n"
     "На странице результатов нажмите «🔔 Отслеживать этот поиск».\n"
     "Сохранёнными поисками можно управлять через «📋 Мои подписки».\n\n"
-    "<i>Часть ссылок на магазины — партнёрские: Loot Hunt получает комиссию, "
+    "<i>Часть ссылок на магазины — партнёрские: Ulovio получает комиссию, "
     "цена для вас не меняется.</i>"
 )
 
@@ -64,7 +64,7 @@ class TelegramHandlers:
         self._register()
 
     def _bot_username(self) -> str:
-        return getattr(self.settings, "bot_username", "loot_hunt_bot") or "loot_hunt_bot"
+        return getattr(self.settings, "bot_username", "ulovio_bot") or "ulovio_bot"
 
     async def refresh_catalog(self) -> None:
         try:
@@ -132,7 +132,7 @@ class TelegramHandlers:
         badge = "<i>(вечный безлимит)</i>" if count >= 3 else f"<i>({limit} макс.)</i>"
         ref_link = f"https://t.me/{self._bot_username()}?start=ref_{user_id}"
         reply_text = (
-            "🎁 <b>Приглашайте друзей в Loot Hunt и получайте бонусы!</b>\n\n"
+            "🎁 <b>Приглашайте друзей в Ulovio и получайте бонусы!</b>\n\n"
             f"Ваша персональная ссылка:\n<code>{ref_link}</code>\n\n"
             "📊 <b>Ваша статистика:</b>\n"
             f"• Приглашено друзей: <b>{count}</b>\n"
@@ -611,7 +611,7 @@ class TelegramHandlers:
         deal_url = top_offer.pepper_url or top_offer.merchant_url or ref_link
         price_info = f" за {top_offer.display_price}" if top_offer.current_price else ""
         share_text = quote(
-            f"Смотри какую скидку нашел через Loot Hunt: {top_offer.title}{price_info}\n\n"
+            f"Смотри какую скидку нашел через Ulovio: {top_offer.title}{price_info}\n\n"
             f"Ищи скидки в Польше и Германии в боте: {ref_link}"
         )
         share_url = (
