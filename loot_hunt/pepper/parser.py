@@ -8,9 +8,13 @@ from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
+from loot_hunt.extractors import parse_title_entities
+from loot_hunt.platforms import get_platform
+
 from .models import Offer
 
 BASE_URL = "https://www.pepper.pl"
+PEPPER_DOMAINS = ("pepper.pl", "mydealz.de", "hotukdeals.com")
 VUE_RE = re.compile(
     r"""data-vue3='(\{"name":"ThreadMainListItemNormalizer".*?)'|"""
     r'data-vue3=&apos;(\{"name":"ThreadMainListItemNormalizer".*?)&apos;',
@@ -122,17 +126,25 @@ def _text_from(value: Any) -> str | None:
     return result or None
 
 
-def _url_from(value: Any) -> str | None:
+def _url_from(value: Any, base_url: str = BASE_URL) -> str | None:
     if isinstance(value, dict):
         value = _pick(value, "url", "link", "targetUrl", "target")
     if not isinstance(value, str):
         return None
-    url = urljoin(BASE_URL, html.unescape(value))
+    url = urljoin(base_url, html.unescape(value))
     parsed = urlparse(url)
     return url if parsed.scheme in {"http", "https"} and parsed.netloc else None
 
 
-def normalize_offer(raw: dict[str, Any], pepper_url: str | None = None) -> Offer | None:
+def normalize_offer(
+    raw: dict[str, Any],
+    pepper_url: str | None = None,
+    *,
+    platform_code: str = "pl",
+    base_url: str | None = None,
+) -> Offer | None:
+    platform = get_platform(platform_code)
+    resolved_base = base_url or platform.domain
     thread_id = str(_pick(raw, "threadId", "thread_id", "id") or "")
     title = clean(_pick(raw, "title", "name"))
     if not thread_id or not title:
@@ -158,17 +170,20 @@ def normalize_offer(raw: dict[str, Any], pepper_url: str | None = None) -> Offer
             "targetUrl",
             "link",
             "linkCloakedItemMainButton",
-        )
+        ),
+        base_url=resolved_base,
     )
-    if (
-        merchant_url
-        and urlparse(merchant_url).netloc.endswith("pepper.pl")
-        and "/visit/" not in urlparse(merchant_url).path
-    ):
-        merchant_url = None
+    if merchant_url:
+        parsed_netloc = urlparse(merchant_url).netloc.lower()
+        if (
+            any(parsed_netloc.endswith(d) for d in PEPPER_DOMAINS)
+            and "/visit/" not in urlparse(merchant_url).path
+        ):
+            merchant_url = None
     coupon = _text_from(_pick(raw, "voucherCode", "couponCode", "promoCode"))
     category = _text_from(_pick(raw, "group", "category", "mainGroup"))
-    explicit_url = _url_from(_pick(raw, "url", "shareableLink"))
+    explicit_url = _url_from(_pick(raw, "url", "shareableLink"), base_url=resolved_base)
+    parsed_entity = parse_title_entities(title, price=current, category_hint=category)
     return Offer(
         thread_id=thread_id,
         title=title,
@@ -183,10 +198,28 @@ def normalize_offer(raw: dict[str, Any], pepper_url: str | None = None) -> Offer
         published_at=moment(_pick(raw, "publishedAt", "published_at", "createdAt")),
         category=category,
         is_expired=bool(_pick(raw, "isExpired", "expired", "is_expired")),
+        currency=platform.currency,
+        country=platform.country,
+        platform_code=platform.code,
+        price_pln=platform.to_pln(current),
+        forwarding_service=platform.forwarding_service_name,
+        forwarding_price_pln=platform.forwarding_price_pln,
+        forwarding_url=platform.forwarding_url,
+        specs=parsed_entity.specs,
     )
 
 
-def detail_from_page(page: str, pepper_url: str) -> Offer | None:
+def detail_from_page(
+    page: str,
+    pepper_url: str,
+    *,
+    platform_code: str = "pl",
+    base_url: str | None = None,
+) -> Offer | None:
     state = initial_state(page)
     raw = state.get("threadDetail") or state.get("thread")
-    return normalize_offer(raw, pepper_url) if isinstance(raw, dict) else None
+    return (
+        normalize_offer(raw, pepper_url, platform_code=platform_code, base_url=base_url)
+        if isinstance(raw, dict)
+        else None
+    )

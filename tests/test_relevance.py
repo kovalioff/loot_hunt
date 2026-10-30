@@ -143,3 +143,54 @@ def test_fallback_direct_search_is_not_filtered():
     planned = PlannedQuery(query="непереведенный запрос")
     search_plan = plan("непереведенный запрос", planned, "fallback")
     assert is_relevant(Offer("12", "Dowolny wynik zwrócony przez Pepper"), planned, search_plan)
+
+
+def test_polish_l_stroke_normalization_and_short_word_stemming():
+    from loot_hunt.search.relevance import _matches, normalize, tokens
+
+    assert normalize("płaszcz") == "plaszcz"
+    assert tokens("ładowarka") == ("ladowarka",)
+    assert tokens("głośnik") == ("glosnik",)
+    assert _matches("kurtka", {"kurtki"})
+    assert _matches("buty", {"butow"})
+    assert _matches("kawa", {"kawy"})
+    assert _matches("gra", {"gry"})
+
+
+def test_decimal_numbers_are_not_mistaken_for_dates():
+    from loot_hunt.search.relevance import extract_date_evidence
+
+    assert extract_date_evidence("Tablet 10.5 cala", None) == ()
+    assert extract_date_evidence("Bagaż 10.5 kg w cenie", None) == ()
+    assert extract_date_evidence("Cena 12.05 zł", None) == ()
+
+
+def test_bundle_is_not_rejected_as_compatibility_target():
+    console = PlannedQuery(query="Xbox", category="gaming", object_terms=["konsola", "xbox"])
+    search_plan = plan("приставка xbox", console)
+    bundle_offer = Offer(
+        "bundle", "Konsola Xbox Series X i gra Diablo IV w zestawie", category="Gaming"
+    )
+    res = evaluate_offer(bundle_offer, console, search_plan)
+    assert res.accepted, f"Bundle was rejected: {res.rejection}"
+
+
+def test_geographic_directional_preposition_preservation():
+    from loot_hunt.search.models import SemanticConstraint
+    query = PlannedQuery(query="wakacje Praga", category="travel")
+    search_plan = SearchPlan(
+        original_query="weekend in Prague",
+        intent="broad",
+        geography=SemanticConstraint(
+            name="destination Prague",
+            evidence_terms=["do Pragi", "Pradze"],
+            conflict_terms=["z Pragi"],
+        ),
+        queries=[query],
+    )
+    to_prague = Offer("to", "Wycieczka do Pragi na weekend", category="Podróże")
+    assert evaluate_offer(to_prague, query, search_plan).accepted
+
+    from_prague = Offer("from", "Tanie loty z Pragi do Nowego Jorku", category="Podróże")
+    res = evaluate_offer(from_prague, query, search_plan)
+    assert not res.accepted and "geographic conflict" in (res.rejection or "")

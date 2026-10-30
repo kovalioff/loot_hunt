@@ -72,3 +72,22 @@ async def test_zero_result_search_creates_trackable_session():
     assert "Активных предложений сейчас нет" in text
     assert keyboard.inline_keyboard[0][0].text == "🔔 Отслеживать этот поиск"
     assert keyboard.inline_keyboard[0][0].callback_data == "ws:empty-session"
+
+
+def test_category_result_keyboard_exposes_category_subscription():
+    from loot_hunt.pepper.categories import PARENTS
+    from loot_hunt.telegram.keyboards import categories_keyboard, result_keyboard
+
+    keyboard = result_keyboard("cat-session", [], 0, 10, watch=True, category_key="gaming")
+    assert any(
+        btn.callback_data == "wc:cat-session:gaming"
+        for row in keyboard.inline_keyboard
+        for btn in row
+    )
+
+    sub_keyboard = categories_keyboard(PARENTS[0].children, show_back=True)
+    assert any(
+        btn.callback_data == "cat:root:0"
+        for row in sub_keyboard.inline_keyboard
+        for btn in row
+    )

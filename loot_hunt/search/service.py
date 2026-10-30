@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 from loot_hunt.pepper.categories import PARENTS
 from loot_hunt.pepper.models import Offer
+from loot_hunt.platforms import Platform, get_platform
 
 from .models import PlannedQuery, SearchPlan
 from .planner import SearchPlanner
@@ -106,16 +107,28 @@ class SearchService:
         self.pepper = pepper
         self.cap = min(30, max(5, cap))
 
-    async def search(self, text: str) -> SearchResult:
-        plan = await self.planner.plan(text)
-        offers, debug = await self._execute(plan)
+    async def search(
+        self, text: str, *, platform: Platform | str = "pl"
+    ) -> SearchResult:
+        target = get_platform(platform)
+        try:
+            plan = await self.planner.plan(text, platform=target)
+        except TypeError:
+            plan = await self.planner.plan(text)
+        offers, debug = await self._execute(plan, platform=target)
         return SearchResult(plan, offers, debug)
 
-    async def execute_plan(self, plan: SearchPlan) -> list[Offer]:
-        offers, _ = await self._execute(plan)
+    async def execute_plan(
+        self, plan: SearchPlan, *, platform: Platform | str | None = None
+    ) -> list[Offer]:
+        target = get_platform(platform or getattr(plan, "platform", "pl"))
+        offers, _ = await self._execute(plan, platform=target)
         return offers
 
-    async def _execute(self, plan: SearchPlan) -> tuple[list[Offer], SearchDebug]:
+    async def _execute(
+        self, plan: SearchPlan, *, platform: Platform | str = "pl"
+    ) -> tuple[list[Offer], SearchDebug]:
+        target = get_platform(platform)
         debug = SearchDebug(plan.sort_mode)
         candidates: dict[str, _Candidate] = {}
         raw_ids: set[str] = set()
@@ -123,7 +136,8 @@ class SearchService:
 
         retrievals = self._retrieval_queries(plan)
         first_pages = await asyncio.gather(
-            *(self._search_query(item, 1) for item, _ in retrievals), return_exceptions=True
+            *(self._search_query(item, 1, platform=target) for item, _ in retrievals),
+            return_exceptions=True,
         )
         requests += len(first_pages)
         if first_pages and all(isinstance(batch, BaseException) for batch in first_pages):
@@ -154,7 +168,7 @@ class SearchService:
                 if first_stats[index][1] == 0 or MAX_SEARCH_PAGES < 2:
                     continue
                 planned, source = retrievals[index]
-                batch = await self._search_query(planned, 2)
+                batch = await self._search_query(planned, 2, platform=target)
                 requests += 1
                 self._consume(
                     plan, planned, batch, candidates, raw_ids, debug, source=source, page=2
@@ -168,7 +182,10 @@ class SearchService:
         ):
             path = CATEGORY_PATHS[scope]
             try:
-                batch = await self.pepper.category(path, page=1)
+                try:
+                    batch = await self.pepper.category(path, page=1, platform=target)
+                except TypeError:
+                    batch = await self.pepper.category(path, page=1)
             except Exception as exc:
                 debug.requests.append(
                     RequestDebug("category", path, 1, 0, 0, 0, type(exc).__name__)
@@ -181,8 +198,16 @@ class SearchService:
         ranked = self._rank(candidates.values(), plan)
         selected = ranked[: min(30, self.cap + 5)]
         offers = [item.offer for item in selected]
+
+        async def enrich_item(item: Offer) -> Offer:
+            try:
+                return await self.pepper.enrich(item, platform=target)
+            except TypeError:
+                return await self.pepper.enrich(item)
+
         enriched = await asyncio.gather(
-            *(self.pepper.enrich(item) for item in offers), return_exceptions=True
+            *(enrich_item(item) for item in offers),
+            return_exceptions=True,
         )
         final_candidates: list[_Candidate] = []
         for original, value in zip(selected, enriched, strict=True):
@@ -248,6 +273,30 @@ class SearchService:
                 )
             else:
                 evaluation = evaluate_offer(offer, planned, plan, source_kind=source)
+            if (
+                evaluation.accepted
+                and plan.max_price is not None
+                and offer.current_price is not None
+                and offer.current_price > plan.max_price
+            ):
+                evaluation = RelevanceResult(
+                    False,
+                    evaluation.score,
+                    evaluation.reasons,
+                    f"exceeds max price {plan.max_price}",
+                )
+            if (
+                evaluation.accepted
+                and plan.min_price is not None
+                and offer.current_price is not None
+                and offer.current_price < plan.min_price
+            ):
+                evaluation = RelevanceResult(
+                    False,
+                    evaluation.score,
+                    evaluation.reasons,
+                    f"below min price {plan.min_price}",
+                )
             if (
                 evaluation.accepted
                 and plan.intent == "broad"
@@ -440,12 +489,43 @@ class SearchService:
                     evaluation.reasons,
                     "object class unconfirmed after enrichment",
                 )
+            if (
+                evaluation.accepted
+                and plan.max_price is not None
+                and offer.current_price is not None
+                and offer.current_price > plan.max_price
+            ):
+                evaluation = RelevanceResult(
+                    False,
+                    evaluation.score,
+                    evaluation.reasons,
+                    f"exceeds max price {plan.max_price}",
+                )
+            if (
+                evaluation.accepted
+                and plan.min_price is not None
+                and offer.current_price is not None
+                and offer.current_price < plan.min_price
+            ):
+                evaluation = RelevanceResult(
+                    False,
+                    evaluation.score,
+                    evaluation.reasons,
+                    f"below min price {plan.min_price}",
+                )
             evaluations.append((item, evaluation))
         return max(evaluations, key=lambda pair: (pair[1].accepted, pair[1].score))
 
-    async def _search_query(self, planned: PlannedQuery, page: int = 1) -> list[Offer]:
+    async def _search_query(
+        self, planned: PlannedQuery, page: int = 1, *, platform: Platform | str = "pl"
+    ) -> list[Offer]:
         group_id = CATEGORY_GROUP_IDS.get(planned.category or "")
-        return await self.pepper.search(planned.query, page=page, group_id=group_id)
+        try:
+            return await self.pepper.search(
+                planned.query, page=page, group_id=group_id, platform=platform
+            )
+        except TypeError:
+            return await self.pepper.search(planned.query, page=page, group_id=group_id)
 
     @staticmethod
     def _retrieval_queries(plan: SearchPlan) -> list[tuple[PlannedQuery, str]]:

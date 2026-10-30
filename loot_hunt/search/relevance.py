@@ -12,6 +12,18 @@ from loot_hunt.pepper.models import Offer
 from .models import PlannedQuery, SearchPlan, SemanticConstraint, TemporalConstraint
 
 TOKEN_RE = re.compile(r"[a-z0-9]+")
+POLISH_CHAR_MAP = str.maketrans({
+    "ą": "a", "ć": "c", "ę": "e", "ł": "l", "ń": "n", "ó": "o", "ś": "s", "ź": "z", "ż": "z",
+    "Ą": "a", "Ć": "c", "Ę": "e", "Ł": "l", "Ń": "n", "Ó": "o", "Ś": "s", "Ź": "z", "Ż": "z",
+})
+SHORT_NOUN_VARIANTS: dict[str, tuple[str, ...]] = {
+    "gra": ("gry", "gier", "grom"),
+    "gry": ("gra", "gier", "grom"),
+    "lot": ("loty", "lotow"),
+    "loty": ("lot", "lotow"),
+    "dom": ("domu", "domy", "domow"),
+    "domy": ("dom", "domu", "domow"),
+}
 GENERIC_TERMS = frozenset(
     {
         "best",
@@ -101,7 +113,8 @@ class RelevanceResult:
 
 
 def normalize(value: str | None) -> str:
-    decomposed = unicodedata.normalize("NFKD", unquote(value or ""))
+    cleaned = unquote(value or "").translate(POLISH_CHAR_MAP)
+    decomposed = unicodedata.normalize("NFKD", cleaned)
     return "".join(char for char in decomposed if not unicodedata.combining(char)).casefold()
 
 
@@ -115,24 +128,29 @@ def _matches(anchor: str, haystack: set[str]) -> bool:
     if month := MONTH_MATCHES.get(anchor):
         root, number = month
         return number in haystack or any(word.startswith(root) for word in haystack)
-    if len(anchor) < 7:
+    if any(variant in haystack for variant in SHORT_NOUN_VARIANTS.get(anchor, ())):
+        return True
+    if len(anchor) < 4:
         return False
-    stem = anchor[:6]
+    stem = anchor[:6] if len(anchor) >= 7 else anchor[:min(len(anchor) - 1, 4)]
     return any(len(word) >= len(stem) and word.startswith(stem) for word in haystack)
 
 
 def _groups(values: list[str], *, minimum: int = 2) -> tuple[tuple[str, ...], ...]:
-    return tuple(
-        group
-        for value in values
-        if (
-            group := tuple(
+    result: list[tuple[str, ...]] = []
+    for value in values:
+        raw = tokens(value)
+        if len(raw) > 1:
+            group = tuple(token for token in raw if token not in GENERIC_TERMS)
+        else:
+            group = tuple(
                 token
-                for token in tokens(value)
+                for token in raw
                 if len(token) >= minimum and token not in GENERIC_TERMS
             )
-        )
-    )
+        if group:
+            result.append(group)
+    return tuple(result)
 
 
 def _group_matches(group: tuple[str, ...], haystack: set[str]) -> bool:
@@ -173,13 +191,17 @@ def _compatibility_only(object_groups: tuple[tuple[str, ...], ...], title: str) 
             rf"\b(?:do|dla|na|pod)\s+{stem}\w*",
             rf"\b\w+\s*[/|]\s*{stem}\w*",
             rf"\b{stem}\w*\s*[/|]\s*\w+",
-            rf"\b{stem}\w*\s+(?:i|oraz)\s+\w+",
         ):
             contexts.extend(match.span() for match in re.finditer(pattern, normalized_title))
     return bool(occurrences) and all(
         any(start <= left and right <= end for start, end in contexts)
         for left, right in occurrences
     )
+
+
+NON_DATE_UNITS = re.compile(
+    r"^\s*(?:kg|g|cal|cala|cali|zl|pln|eur|usd|cm|mm|m|v|w|mah|gb|tb|ghz)\b"
+)
 
 
 def _valid_date(year: int, month: int, day: int) -> date | None:
@@ -198,9 +220,19 @@ def extract_date_evidence(title: str | None, merchant_url: str | None) -> tuple[
             found.add(value)
     explicit_years = [int(value) for value in re.findall(r"(?<!\d)(20\d{2})(?!\d)", text)]
     inferred_year = explicit_years[0] if len(set(explicit_years)) == 1 else 2000
-    for day, month, year in re.findall(
-        r"(?=(?<!\d)(\d{1,2})[.-](\d{1,2})(?:[.-](20\d{2}))?(?!\d))", text
+    for match in re.finditer(
+        r"(?=(?<!\d)(\d{1,2})([.-])(\d{1,2})(?:[.-](20\d{2}))?(?!\d))", text
     ):
+        day, sep, month, year = match.group(1), match.group(2), match.group(3), match.group(4)
+        matched_len = (
+            len(day)
+            + len(sep)
+            + len(month)
+            + (len(year) + 1 if year else 0)
+        )
+        tail = text[match.start() + matched_len :]
+        if not year and (NON_DATE_UNITS.match(tail) or (sep == "." and len(month) == 1)):
+            continue
         if value := _valid_date(int(year) if year else inferred_year, int(month), int(day)):
             found.add(value)
     for compact in re.findall(r"(?<!\d)(2\d)(0[1-9]|1[0-2])([0-3]\d)(?!\d)", text):

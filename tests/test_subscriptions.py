@@ -92,3 +92,37 @@ async def test_zero_result_subscription_has_empty_baseline_and_keeps_semantics(t
         assert restored == plan
     finally:
         await db.close()
+
+
+async def test_purge_expired_sessions(tmp_path):
+    db = Database(tmp_path / "sessions.db")
+    await db.connect()
+    try:
+        plan = SearchPlan(original_query="q", queries=[PlannedQuery(query="q")])
+        # expired session with ttl=-10
+        await db.create_session(1, "query1", plan, [], ttl=-10)
+        # valid session with ttl=3600
+        valid_id = await db.create_session(1, "query2", plan, [], ttl=3600)
+        purged = await db.purge_expired_sessions()
+        assert purged == 1
+        assert await db.get_session(valid_id, 1) is not None
+    finally:
+        await db.close()
+
+
+async def test_watcher_pauses_blocked_user_subscription(tmp_path):
+    db = Database(tmp_path / "blocked.db")
+    await db.connect()
+
+    async def blocked_notify(user_id, subscription_id, offer):
+        raise RuntimeError("Forbidden: bot was blocked by the user")
+
+    try:
+        plan = SearchPlan(original_query="x", queries=[PlannedQuery(query="x")])
+        await db.create_subscription(99, "search", "x", "x", [], plan)
+        watcher = WatcherService(db, Search(), Pepper(), blocked_notify)
+        await watcher.check_once()
+        subs = await db.subscriptions(99)
+        assert subs[0]["active"] == 0
+    finally:
+        await db.close()

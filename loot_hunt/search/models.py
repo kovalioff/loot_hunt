@@ -25,7 +25,7 @@ SortMode = Literal["fresh", "cheap", "hot"]
 
 
 class SemanticConstraint(BaseModel):
-    """User meaning plus Polish title/URL evidence supplied by the planner."""
+    """User meaning plus title/URL evidence supplied by the planner."""
 
     name: str = Field(min_length=1, max_length=80)
     evidence_terms: list[str] = Field(default_factory=list, max_length=10)
@@ -57,6 +57,7 @@ class PlannedQuery(BaseModel):
 class SearchPlan(BaseModel):
     original_query: str = ""
     intent: str = Field(default="search", max_length=40)
+    platform: str = Field(default="pl", max_length=10)
     object_class: SemanticConstraint | None = None
     sort_mode: SortMode = "fresh"
     hard_constraints: list[SemanticConstraint] = Field(default_factory=list, max_length=8)
@@ -66,6 +67,8 @@ class SearchPlan(BaseModel):
     temporal: TemporalConstraint | None = None
     geography: SemanticConstraint | None = None
     queries: list[PlannedQuery] = Field(min_length=1, max_length=8)
+    min_price: float | None = None
+    max_price: float | None = None
 
 
 class GeminiPlannedQuery(BaseModel):
