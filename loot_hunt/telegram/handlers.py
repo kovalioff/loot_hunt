@@ -231,7 +231,13 @@ class TelegramHandlers:
                 result.offers,
                 self.settings.search_session_ttl_seconds,
             )
-            await self._render(status, session_id, result.offers, 0)
+            spelling_notice = None
+            if getattr(result, "spelling", None) and result.spelling.was_corrected:
+                spelling_notice = (
+                    f"✏️ <i>Показаны результаты для:</i> <b>{html.escape(result.spelling.effective_query)}</b>\n"
+                    f"<i>(исправлена опечатка с «{html.escape(result.spelling.original_query)}»)</i>"
+                )
+            await self._render(status, session_id, result.offers, 0, spelling_notice=spelling_notice)
         except Exception:
             logger.exception("Interactive search failed")
             await status.edit_text("Pepper временно недоступен. Попробуйте ещё раз немного позже.")
@@ -245,11 +251,15 @@ class TelegramHandlers:
         *,
         watch: bool = True,
         category_key: str | None = None,
+        spelling_notice: str | None = None,
     ) -> None:
         selected = self.search.page(offers, page)
         try:
+            body = results_text(selected, len(offers), page, self.settings.timezone)
+            if spelling_notice:
+                body = f"{spelling_notice}\n\n{body}"
             await message.edit_text(
-                results_text(selected, len(offers), page, self.settings.timezone),
+                body,
                 reply_markup=result_keyboard(
                     session_id, selected, page, len(offers), watch=watch, category_key=category_key
                 ),

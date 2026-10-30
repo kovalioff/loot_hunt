@@ -103,6 +103,8 @@ class RelevanceResult:
     hard_status: str = "MATCH"
     temporal_status: TemporalStatus = "NOT_REQUIRED"
     core_evidence: tuple[str, ...] = ()
+    is_uncertain: bool = False
+    uncertainty_reasons: tuple[str, ...] = ()
 
 
 def normalize(value: str | None) -> str:
@@ -331,6 +333,11 @@ def evaluate_offer(
     """Apply global user semantics to every retrieval branch, then score relevance."""
     if offer.is_expired:
         return RelevanceResult(False, 0, (), "expired")
+    from .structural_relevance import evaluate_structural_relevance
+
+    struct_res = evaluate_structural_relevance(plan.original_query, offer.title, offer.category or "")
+    if struct_res.level == "IRRELEVANT":
+        return RelevanceResult(False, 0, (), struct_res.rejection or "structural conflict", "CONFLICT")
     if reason := mismatch(plan.original_query, offer.title):
         return RelevanceResult(False, 0, (), reason, "CONFLICT")
     if plan.intent == "fallback":
@@ -549,6 +556,11 @@ def evaluate_offer(
             score = max(score, MIN_RELEVANCE_SCORE)
             reasons.append(f"keyword {query_matches}/{len(query_terms)}")
 
+    is_uncertain = struct_res.is_uncertain
+    uncertainty_reasons = struct_res.uncertainty_reasons
+    if is_uncertain:
+        score = max(MIN_RELEVANCE_SCORE, score * 0.8)
+
     accepted = score >= MIN_RELEVANCE_SCORE
     return RelevanceResult(
         accepted,
@@ -558,6 +570,8 @@ def evaluate_offer(
         "MATCH",
         temporal_status,
         tuple(core_evidence),
+        is_uncertain=is_uncertain,
+        uncertainty_reasons=uncertainty_reasons,
     )
 
 

@@ -4,6 +4,8 @@ import asyncio
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 
+from typing import Any
+
 from loot_hunt.pepper.categories import PARENTS
 from loot_hunt.pepper.models import Offer
 from loot_hunt.platforms import Platform, get_platform
@@ -86,6 +88,8 @@ class SearchResult:
     plan: SearchPlan
     offers: list[Offer]
     debug: SearchDebug | None = None
+    has_confident_matches: bool = True
+    spelling: Any = None
 
 
 @dataclass(slots=True)
@@ -110,13 +114,23 @@ class SearchService:
     async def search(
         self, text: str, *, platform: Platform | str = "pl"
     ) -> SearchResult:
+        from .spelling import correct_query
+
+        correction = correct_query(text)
+        effective_query = correction.effective_query if correction.was_corrected else text
         target = get_platform(platform)
         try:
-            plan = await self.planner.plan(text, platform=target)
+            plan = await self.planner.plan(effective_query, platform=target)
         except TypeError:
-            plan = await self.planner.plan(text)
+            plan = await self.planner.plan(effective_query)
+        if correction.was_corrected:
+            plan.original_query = text
         offers, debug = await self._execute(plan, platform=target)
-        return SearchResult(plan, offers, debug)
+        has_confident = len(offers) > 0 and any(
+            debug.offers.get(o.thread_id) and not getattr(debug.offers[o.thread_id], "is_uncertain", False)
+            for o in offers
+        ) if offers else False
+        return SearchResult(plan, offers, debug, has_confident_matches=has_confident, spelling=correction)
 
     async def execute_plan(
         self, plan: SearchPlan, *, platform: Platform | str | None = None
@@ -579,11 +593,13 @@ class SearchService:
             "exact model" in item.evaluation.reasons
             or any(reason.startswith("hard terms") for reason in item.evaluation.reasons)
         )
+        uncertain_penalty = 1 if getattr(item.evaluation, "is_uncertain", False) else 0
         if mode == "cheap":
             free = "za darmo" in normalize(offer.title) or "bezplat" in normalize(offer.title)
             missing = offer.current_price is None and not free
             price = offer.current_price if offer.current_price is not None else (0 if free else 0)
             return (
+                uncertain_penalty,
                 hard_relevance,
                 -int("temporal" in item.evaluation.reasons),
                 missing,
@@ -595,6 +611,7 @@ class SearchService:
             )
         if mode == "hot":
             return (
+                uncertain_penalty,
                 hard_relevance,
                 -int("temporal" in item.evaluation.reasons),
                 -item.evaluation.score,
@@ -603,6 +620,7 @@ class SearchService:
                 offer.thread_id,
             )
         return (
+            uncertain_penalty,
             hard_relevance,
             -int("temporal" in item.evaluation.reasons),
             -item.evaluation.score,

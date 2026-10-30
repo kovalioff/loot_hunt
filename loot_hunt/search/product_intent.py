@@ -132,6 +132,12 @@ def _airpods_version(text: str):
 
 
 def mismatch(query: str, title: str) -> str | None:
+    from .structural_relevance import evaluate_structural_relevance
+
+    struct_res = evaluate_structural_relevance(query, title)
+    if struct_res.level == "IRRELEVANT":
+        return struct_res.rejection or "accessory or structural mismatch"
+
     wanted = infer_intent(query)
     if not wanted.device and not wanted.accessory:
         return None
