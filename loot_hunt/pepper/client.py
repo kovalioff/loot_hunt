@@ -9,7 +9,6 @@ from urllib.parse import quote, urljoin, urlparse
 from curl_cffi.requests import AsyncSession
 from curl_cffi.requests.exceptions import RequestException
 
-from loot_hunt.affiliate import AffiliateTransformer
 from loot_hunt.extractors import ExtractedProductInfo, extract_product_microdata
 from loot_hunt.platforms import Platform, get_platform
 
@@ -37,11 +36,9 @@ class PepperClient:
         timeout: int = 25,
         max_concurrency: int = 4,
         platform: Platform | str = "pl",
-        affiliate: AffiliateTransformer | None = None,
     ) -> None:
         self.timeout = timeout
         self.platform = get_platform(platform)
-        self.affiliate = affiliate or AffiliateTransformer()
         self._session = AsyncSession(impersonate="chrome")
         self._warmed_hosts: set[str] = set()
         self._warmup_lock = asyncio.Lock()
@@ -77,6 +74,14 @@ class PepperClient:
                 return response
             except RequestException as exc:
                 last_error = exc
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+                if (
+                    isinstance(status, int)
+                    and 400 <= status < 500
+                    and status not in {408, 418, 425, 429}
+                ):
+                    # 4xx responses are not transient: retrying only delays the caller.
+                    break
                 if attempt < 2:
                     await asyncio.sleep((2**attempt) + random.random())
         raise PepperError(f"Pepper request failed for {url}: {last_error}")
@@ -170,10 +175,6 @@ class PepperClient:
                         offer.omnibus_price = microdata.omnibus_price
                         offer.fair_discount_pct = microdata.fair_discount_pct
                         offer.is_fake_discount = microdata.is_fake_discount
-        if offer.merchant_url:
-            offer.merchant_url = self.affiliate.transform(
-                offer.merchant_url, platform_code=target.code
-            )
         return offer
 
     async def resolve_merchant_info(

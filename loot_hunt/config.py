@@ -14,6 +14,13 @@ def _int(name: str, default: int) -> int:
         return default
 
 
+def _float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     bot_token: str
@@ -27,6 +34,7 @@ class Settings:
     pepper_max_concurrency: int
     search_result_cap: int
     search_session_ttl_seconds: int
+    bot_username: str = "loot_hunt_bot"
     deals_channel_id: str | None = None
     min_channel_temperature: float = 300.0
 
@@ -51,6 +59,8 @@ class Settings:
             pepper_max_concurrency=max(1, _int("PEPPER_MAX_CONCURRENCY", 4)),
             search_result_cap=min(30, max(5, _int("SEARCH_RESULT_CAP", 25))),
             search_session_ttl_seconds=max(300, _int("SEARCH_SESSION_TTL_SECONDS", 3600)),
+            bot_username=os.getenv("BOT_USERNAME", "loot_hunt_bot").strip().lstrip("@")
+            or "loot_hunt_bot",
             deals_channel_id=os.getenv("DEALS_CHANNEL_ID") or None,
-            min_channel_temperature=float(os.getenv("MIN_CHANNEL_TEMPERATURE", "300.0")),
+            min_channel_temperature=_float("MIN_CHANNEL_TEMPERATURE", 300.0),
         )

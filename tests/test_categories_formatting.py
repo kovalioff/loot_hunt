@@ -75,6 +75,23 @@ def test_pepper_url_is_never_a_merchant_fallback():
     assert "🏪 Store" in card and "<a " not in card
 
 
+def test_specs_and_currency_are_html_escaped():
+    offer = Offer(
+        "1",
+        "X",
+        current_price=10,
+        currency="<b>zł</b>",
+        omnibus_price=20,
+        fair_discount_pct=50,
+        specs={"cpu": "<script>alert(1)</script>", "gpu": "RTX 4070"},
+    )
+    card = offer_card(offer, "Europe/Warsaw")
+    assert "<script>" not in card
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in card
+    assert "<b>zł</b>" not in card
+    assert "&lt;b&gt;zł&lt;/b&gt;" in card
+
+
 def test_result_and_notification_keyboards_have_no_offer_links():
     offers = [Offer("1", "X", merchant_url="https://shop.example/x")]
     keyboard = result_keyboard("abc123", offers, 0, 6)

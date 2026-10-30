@@ -9,10 +9,34 @@ from .models import (
     CategoryScope,
     PlannedQuery,
     SearchPlan,
-    SemanticConstraint,
     SortMode,
     TemporalConstraint,
 )
+
+PRICE_CURRENCY = r"zł|pln|eur|€|usd|\$|gbp|£"
+NON_PRICE_TAIL = re.compile(
+    r"^\s*(?:%|lat|lata|rok|roku|osób|osob|szt(?:uk)?|dni|dnia|tygodni|miesi(?:ą|a)cy|"
+    r"kg|g|gb|tb|cm|mm|hz|лет|год(?:а)?|дн(?:ей|я)|недел(?:ь|и)|месяц(?:ев|а)?|"
+    r"человек|шт|кг|г|гб|тб|см|мм|раз)\b",
+    re.IGNORECASE,
+)
+
+
+def _extract_bound(text: str, pattern: str) -> tuple[float | None, str]:
+    """Return a numeric price bound only when the match is not a time/count unit.
+
+    Without a currency token, "do 5 lat" (for 5 years) must not become a 5 zł budget.
+    """
+    match = re.search(pattern, text, re.IGNORECASE)
+    if not match:
+        return None, text
+    value = float(match.group(1).replace(",", "."))
+    has_currency = bool(match.group(2))
+    tail = text[match.end() :]
+    if value <= 0 or (not has_currency and NON_PRICE_TAIL.match(tail)):
+        return None, text
+    return value, text[: match.start()] + text[match.end() :]
+
 
 STOP_PATTERNS = [
     r"\b(хочу|мне|нам|для меня|найди|покажи|ищу|посоветуй|где купить)\b",
@@ -171,29 +195,17 @@ class DeterministicSearchPlanner:
         min_price: float | None = None
         max_price: float | None = None
 
-        max_match = re.search(
-            r"(?:до|do|under|below|bis|<|<=)\s*(\d+(?:[.,]\d+)?)\s*(?:zł|pln|eur|€|usd|\$|gbp|£)?",
+        max_price, text = _extract_bound(
             text,
-            re.IGNORECASE,
+            rf"(?:\b(?:до|do|under|below|bis)\b|<|<=|≤)\s*(\d+(?:[.,]\d+)?)\s*({PRICE_CURRENCY})?",
         )
-        if max_match:
-            try:
-                max_price = float(max_match.group(1).replace(",", "."))
-                text = text[: max_match.start()] + text[max_match.end() :]
-            except ValueError:
-                pass
-
-        min_match = re.search(
-            r"(?:от|od|from|over|above|ab|>|>=)\s*(\d+(?:[.,]\d+)?)\s*(?:zł|pln|eur|€|usd|\$|gbp|£)?",
+        min_price, text = _extract_bound(
             text,
-            re.IGNORECASE,
+            rf"(?:\b(?:от|od|from|over|above|ab)\b|>|>=|≥)\s*(\d+"
+            rf"(?:[.,]\d+)?)\s*({PRICE_CURRENCY})?",
         )
-        if min_match:
-            try:
-                min_price = float(min_match.group(1).replace(",", "."))
-                text = text[: min_match.start()] + text[min_match.end() :]
-            except ValueError:
-                pass
+        if min_price is not None and max_price is not None and min_price > max_price:
+            min_price = max_price = None
 
         # 3. Extract temporal filters
         temporal: TemporalConstraint | None = None
@@ -203,6 +215,7 @@ class DeterministicSearchPlanner:
                 required=True,
                 start_date=now.date(),
                 end_date=now.date(),
+                freshness_days=0,
                 description="today",
             )
             text = re.sub(r"\b(сегодня|dzisiaj|today|heute)\b", "", text, flags=re.IGNORECASE)
@@ -216,6 +229,7 @@ class DeterministicSearchPlanner:
                 required=True,
                 start_date=yesterday,
                 end_date=now.date(),
+                freshness_days=1,
                 description="since yesterday",
             )
             text = re.sub(
@@ -232,6 +246,7 @@ class DeterministicSearchPlanner:
                 required=True,
                 start_date=week_ago,
                 end_date=now.date(),
+                freshness_days=7,
                 description="this week",
             )
             text = re.sub(
@@ -298,12 +313,8 @@ class DeterministicSearchPlanner:
         )
         intent = "exact" if is_exact else ("broad" if matched_concept else "search")
 
-        hard_constraints: list[SemanticConstraint] = []
-        if max_price is not None:
-            hard_constraints.append(
-                SemanticConstraint(name=f"max_price_{int(max_price)}", evidence_terms=[])
-            )
-
+        # Price bounds stay on plan.min_price/max_price: SearchService applies them to offers.
+        # They must not become hard constraints, since hard constraints require title evidence.
         return SearchPlan(
             original_query=raw_text,
             intent=intent,
@@ -312,6 +323,6 @@ class DeterministicSearchPlanner:
             min_price=min_price,
             max_price=max_price,
             temporal=temporal,
-            hard_constraints=hard_constraints,
             queries=queries,
+            keyword_mode=True,
         )

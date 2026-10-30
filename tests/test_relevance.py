@@ -194,3 +194,37 @@ def test_geographic_directional_preposition_preservation():
     from_prague = Offer("from", "Tanie loty z Pragi do Nowego Jorku", category="Podróże")
     res = evaluate_offer(from_prague, query, search_plan)
     assert not res.accepted and "geographic conflict" in (res.rejection or "")
+
+
+def test_month_words_require_exact_inflections():
+    from loot_hunt.search.models import TemporalConstraint
+    from loot_hunt.search.relevance import _month_evidence, temporal_evidence
+
+    assert _month_evidence("Majtki bawełniane", None) == set()
+    assert _month_evidence("Wyjazd w maju", None) == {5}
+    assert (
+        temporal_evidence(
+            Offer("1", "Majtki bawełniane"), TemporalConstraint(required=True, month=5)
+        )
+        == "UNKNOWN"
+    )
+
+
+def test_freshness_uses_published_at():
+    from datetime import UTC, datetime, timedelta
+
+    from loot_hunt.search.models import TemporalConstraint
+    from loot_hunt.search.relevance import temporal_evidence
+
+    today = TemporalConstraint(required=True, freshness_days=0)
+    week = TemporalConstraint(required=True, freshness_days=7)
+    fresh = Offer("1", "Monitor", published_at=datetime.now(UTC))
+    two_days = Offer("2", "Monitor", published_at=datetime.now(UTC) - timedelta(days=2))
+    old = Offer("3", "Monitor", published_at=datetime.now(UTC) - timedelta(days=30))
+    undated = Offer("4", "Monitor")
+
+    assert temporal_evidence(fresh, today) == "MATCH"
+    assert temporal_evidence(two_days, today) == "CONFLICT"
+    assert temporal_evidence(two_days, week) == "MATCH"
+    assert temporal_evidence(old, week) == "CONFLICT"
+    assert temporal_evidence(undated, today) == "UNKNOWN"

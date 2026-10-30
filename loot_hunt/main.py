@@ -9,14 +9,14 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
+from .channel import ChannelPublisher
 from .config import Settings
 from .database import Database
 from .pepper.client import PepperClient
 from .search.planner import SearchPlanner
 from .search.service import SearchService
-from .telegram.formatting import offer_card
 from .telegram.handlers import TelegramHandlers
-from .telegram.keyboards import notification_keyboard
+from .telegram.notifier import TelegramNotifier
 from .watch.service import WatcherService
 
 
@@ -42,14 +42,22 @@ async def run() -> None:
     dispatcher.include_router(handlers.router)
     await handlers.refresh_catalog()
 
-    async def notify(user_id: int, subscription_id: int, offer) -> None:
-        await bot.send_message(
-            user_id,
-            "🆕 <b>Новое предложение</b>\n\n" + offer_card(offer, settings.timezone),
-            reply_markup=notification_keyboard(subscription_id),
+    notifier = TelegramNotifier(bot, settings.timezone)
+    publisher = (
+        ChannelPublisher(
+            bot,
+            settings.deals_channel_id,
+            min_temperature=settings.min_channel_temperature,
+            timezone=settings.timezone,
+            bot_username=settings.bot_username,
+            database=database,
         )
-
-    watcher = WatcherService(database, search, pepper, notify)
+        if settings.deals_channel_id
+        else None
+    )
+    watcher = WatcherService(
+        database, search, pepper, notifier, channel_publisher=publisher
+    )
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for name in (signal.SIGINT, signal.SIGTERM):

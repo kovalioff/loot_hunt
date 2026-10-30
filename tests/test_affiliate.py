@@ -55,3 +55,34 @@ def test_untracked_domains_left_intact():
     url = "https://www.randomshop.eu/item/123"
     assert transformer.transform(url) == url
     assert transformer.transform(None) is None
+
+
+def test_lookalike_domains_are_not_affiliated():
+    transformer = AffiliateTransformer(
+        amazon_tags={"pl": "loothunt-pl-21"},
+        allegro_prefix="https://track.example/click?url=",
+        awin_template="",
+    )
+    for url in (
+        "https://notamazon.com/dp/B08N5WRWNW",
+        "https://amazon.pl.evil.com/dp/B08N5WRWNW",
+        "https://evilallegro.pl/oferta/1",
+        "https://allegro.pl.evil.com/oferta/1",
+    ):
+        assert transformer.transform(url) == url
+
+
+def test_transformation_is_idempotent():
+    transformer = AffiliateTransformer(
+        amazon_tags={"pl": "loothunt-pl-21"},
+        allegro_prefix="https://track.convertiser.com/click?url=",
+        awin_template="https://www.awin1.com/cread.php?awinmid=123&ued={url}",
+    )
+    for url in (
+        "https://www.amazon.pl/dp/B08N5WRWNW",
+        "https://allegro.pl/oferta/gra-xbox-12345",
+        "https://www.mediamarkt.de/de/product/_sony-123.html",
+    ):
+        once = transformer.transform(url)
+        assert once is not None
+        assert transformer.transform(once) == once

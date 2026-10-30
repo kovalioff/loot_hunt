@@ -81,6 +81,16 @@ async def test_cheap_sorts_by_price_after_relevance_and_uses_page_two_when_spars
     assert [item.current_price for item in result.offers] == [220, 455, 879]
 
 
+async def test_price_bounds_filter_offers_without_hard_constraints():
+    plan = monitor_plan()
+    plan.max_price = 300.0
+    pepper = Pepper(
+        {("monitor", 1): [monitor("cheap", 250, hours=1), monitor("expensive", 400, hours=0)]}
+    )
+    result = await SearchService(Planner(plan), pepper).search("monitor")
+    assert [item.thread_id for item in result.offers] == ["cheap"]
+
+
 async def test_fresh_and_hot_sort_modes_are_deterministic():
     now = datetime.now(UTC)
     offers = [

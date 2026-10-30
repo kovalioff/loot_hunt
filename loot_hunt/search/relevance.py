@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Literal
 from urllib.parse import unquote
 
@@ -60,44 +60,36 @@ CATEGORY_ALIASES = {
     "services": ("uslugi", "subskrypcje"),
 }
 MIN_RELEVANCE_SCORE = 2.5
+KEYWORD_ACCEPT_COVERAGE = 0.6
 TemporalStatus = Literal["MATCH", "UNKNOWN", "CONFLICT", "NOT_REQUIRED"]
-MONTH_ROOTS = {
-    1: ("stycz",),
-    2: ("lut",),
-    3: ("marc",),
-    4: ("kwiec", "kwiet"),
-    5: ("maj",),
-    6: ("czerw",),
-    7: ("lip",),
-    8: ("sierp",),
-    9: ("wrzes",),
-    10: ("pazdz",),
-    11: ("listop",),
-    12: ("grud",),
+# Normalized Polish month forms. Exact word matching prevents "majtki" from meaning May.
+MONTH_WORDS: dict[int, frozenset[str]] = {
+    1: frozenset({"styczen", "stycznia", "styczniu", "styczniem", "sty"}),
+    2: frozenset({"luty", "lutego", "lutym", "lut"}),
+    3: frozenset({"marzec", "marca", "marcu", "marcem", "mar"}),
+    4: frozenset({"kwiecien", "kwietnia", "kwietniu", "kwietniem", "kwi"}),
+    5: frozenset({"maj", "maja", "maju", "majem"}),
+    6: frozenset({"czerwiec", "czerwca", "czerwcu", "czerwcem", "cze"}),
+    7: frozenset({"lipiec", "lipca", "lipcu", "lipcem"}),
+    8: frozenset({"sierpien", "sierpnia", "sierpniu", "sierpniem"}),
+    9: frozenset({"wrzesien", "wrzesnia", "wrzesniu", "wrzesniem", "wrz"}),
+    10: frozenset({"pazdziernik", "pazdziernika", "pazdzierniku", "pazdziernikiem", "paz"}),
+    11: frozenset({"listopad", "listopada", "listopadzie", "listopadem", "lis"}),
+    12: frozenset({"grudzien", "grudnia", "grudniu", "grudniem", "gru"}),
 }
-MONTH_ABBREVIATIONS = {
-    1: ("sty",),
-    3: ("mar",),
-    4: ("kwi",),
-    6: ("cze",),
-    9: ("wrz",),
-    10: ("paz",),
-    11: ("lis",),
-    12: ("gru",),
-}
-MONTH_MATCHES = {
-    "styczen": ("stycz", "01"),
-    "luty": ("lut", "02"),
-    "marzec": ("marc", "03"),
-    "kwiecien": ("kwiec", "04"),
-    "maj": ("maj", "05"),
-    "czerwiec": ("czerw", "06"),
-    "lipiec": ("lip", "07"),
-    "sierpien": ("sierp", "08"),
-    "wrzesien": ("wrzes", "09"),
-    "pazdziernik": ("pazdz", "10"),
-    "listopad": ("listop", "11"),
-    "grudzien": ("grud", "12"),
+MONTH_ANCHORS: dict[str, int] = {
+    "styczen": 1,
+    "luty": 2,
+    "marzec": 3,
+    "kwiecien": 4,
+    "maj": 5,
+    "czerwiec": 6,
+    "lipiec": 7,
+    "sierpien": 8,
+    "wrzesien": 9,
+    "pazdziernik": 10,
+    "listopad": 11,
+    "grudzien": 12,
 }
 
 
@@ -125,14 +117,20 @@ def tokens(value: str | None) -> tuple[str, ...]:
 def _matches(anchor: str, haystack: set[str]) -> bool:
     if anchor in haystack:
         return True
-    if month := MONTH_MATCHES.get(anchor):
-        root, number = month
-        return number in haystack or any(word.startswith(root) for word in haystack)
+    if month := MONTH_ANCHORS.get(anchor):
+        return f"{month:02d}" in haystack or any(word in MONTH_WORDS[month] for word in haystack)
     if any(variant in haystack for variant in SHORT_NOUN_VARIANTS.get(anchor, ())):
         return True
-    if len(anchor) < 4:
+    if len(anchor) <= 3:
         return False
-    stem = anchor[:6] if len(anchor) >= 7 else anchor[:min(len(anchor) - 1, 4)]
+    if len(anchor) == 4:
+        # Short nouns inflect (buty -> butow) but must not swallow longer unrelated words
+        # (kawa -> kawalerka), so cap the word growth.
+        stem = anchor[:3]
+        return any(
+            word.startswith(stem) and len(word) <= len(anchor) + 2 for word in haystack
+        )
+    stem = anchor[:6] if len(anchor) >= 7 else anchor[:4]
     return any(len(word) >= len(stem) and word.startswith(stem) for word in haystack)
 
 
@@ -242,21 +240,23 @@ def extract_date_evidence(title: str | None, merchant_url: str | None) -> tuple[
 
 
 def _month_evidence(title: str | None, merchant_url: str | None) -> set[int]:
-    text = normalize(" ".join(filter(None, (title, merchant_url))))
+    words = set(tokens(" ".join(filter(None, (title, merchant_url)))))
     return {
         month
-        for month, roots in MONTH_ROOTS.items()
-        if any(re.search(rf"\b{root}\w*", text) for root in roots)
-        or any(
-            re.search(rf"\b{abbreviation}\b", text)
-            for abbreviation in MONTH_ABBREVIATIONS.get(month, ())
-        )
+        for month, forms in MONTH_WORDS.items()
+        if words & forms or f"{month:02d}" in words
     }
 
 
 def temporal_evidence(offer: Offer, constraint: TemporalConstraint | None) -> TemporalStatus:
     if not constraint or not constraint.required:
         return "NOT_REQUIRED"
+    if constraint.freshness_days is not None:
+        if not offer.published_at:
+            return "UNKNOWN"
+        published = offer.published_at.astimezone(UTC).date()
+        delta = (datetime.now(UTC).date() - published).days
+        return "MATCH" if delta <= constraint.freshness_days else "CONFLICT"
     title_dates = extract_date_evidence(offer.title, None)
     title_months = _month_evidence(offer.title, None)
     if title_dates or title_months:
@@ -528,6 +528,11 @@ def evaluate_offer(
     if query_matches:
         score += min(3, query_matches * 0.75)
         reasons.append(f"query {query_matches}")
+    if plan.keyword_mode and query_terms:
+        coverage = query_matches / len(query_terms)
+        if query_matches and coverage >= KEYWORD_ACCEPT_COVERAGE:
+            score = max(score, MIN_RELEVANCE_SCORE)
+            reasons.append(f"keyword {query_matches}/{len(query_terms)}")
 
     accepted = score >= MIN_RELEVANCE_SCORE
     return RelevanceResult(

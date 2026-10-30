@@ -56,6 +56,9 @@ CREATE TABLE IF NOT EXISTS watcher_state (
  id INTEGER PRIMARY KEY CHECK(id=1), last_run TEXT, checked INTEGER NOT NULL DEFAULT 0,
  notifications INTEGER NOT NULL DEFAULT 0, errors INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS channel_posts (
+ thread_id TEXT PRIMARY KEY, published_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_subscriptions_user ON subscriptions(telegram_user_id);
 CREATE INDEX IF NOT EXISTS idx_subscriptions_active ON subscriptions(active);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON search_sessions(expires_at);
@@ -78,7 +81,20 @@ class Database:
             await self.connection.execute(
                 "ALTER TABLE subscriptions ADD COLUMN platform TEXT NOT NULL DEFAULT 'pl'"
             )
+        # Older databases may already contain duplicate subscriptions created by repeated taps.
+        await self._dedupe_subscriptions()
+        await self.connection.execute(
+            """CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_source
+            ON subscriptions(telegram_user_id, kind, source)"""
+        )
         await self.connection.commit()
+
+    async def _dedupe_subscriptions(self) -> None:
+        await self.db.execute(
+            """DELETE FROM subscriptions WHERE id NOT IN (
+                SELECT MAX(id) FROM subscriptions GROUP BY telegram_user_id, kind, source
+            )"""
+        )
 
     @property
     def db(self) -> aiosqlite.Connection:
@@ -203,6 +219,36 @@ class Database:
         await self.db.commit()
         return cursor.rowcount
 
+    async def purge_stale_offers(self, days: int = 30) -> int:
+        """Drop cached offers that have not been seen recently; they are not user data."""
+        cutoff = (datetime.now(UTC) - timedelta(days=max(1, days))).isoformat()
+        cursor = await self.db.execute(
+            "DELETE FROM offers WHERE last_seen_at <= ?",
+            (cutoff,),
+        )
+        post_cutoff = (datetime.now(UTC) - timedelta(days=max(1, days) * 3)).isoformat()
+        await self.db.execute(
+            "DELETE FROM channel_posts WHERE published_at <= ?",
+            (post_cutoff,),
+        )
+        await self.db.commit()
+        return cursor.rowcount
+
+    async def was_channel_published(self, thread_id: str) -> bool:
+        async with self.db.execute(
+            "SELECT 1 FROM channel_posts WHERE thread_id=?",
+            (thread_id,),
+        ) as cursor:
+            return await cursor.fetchone() is not None
+
+    async def mark_channel_published(self, thread_id: str) -> None:
+        await self.db.execute(
+            """INSERT INTO channel_posts(thread_id, published_at) VALUES(?,?)
+            ON CONFLICT(thread_id) DO UPDATE SET published_at=excluded.published_at""",
+            (thread_id, datetime.now(UTC).isoformat()),
+        )
+        await self.db.commit()
+
     async def get_session(self, session_id: str, user_id: int) -> dict[str, Any] | None:
         cursor = await self.db.execute(
             "SELECT * FROM search_sessions WHERE id=? AND telegram_user_id=? AND expires_at>?",
@@ -228,10 +274,15 @@ class Database:
         platform: str | None = None,
     ) -> int:
         platform_code = platform or (plan.platform if plan else "pl")
-        cursor = await self.db.execute(
+        await self.db.execute(
             """INSERT INTO subscriptions(
                 telegram_user_id,kind,label,source,plan_json,platform,created_at
-            ) VALUES(?,?,?,?,?,?,?)""",
+            ) VALUES(?,?,?,?,?,?,?)
+            ON CONFLICT(telegram_user_id,kind,source) DO UPDATE SET
+                label=excluded.label,
+                plan_json=COALESCE(excluded.plan_json, subscriptions.plan_json),
+                platform=excluded.platform,
+                active=1""",
             (
                 user_id,
                 kind,
@@ -242,10 +293,23 @@ class Database:
                 datetime.now(UTC).isoformat(),
             ),
         )
-        subscription_id = int(cursor.lastrowid or 0)
+        async with self.db.execute(
+            "SELECT id FROM subscriptions WHERE telegram_user_id=? AND kind=? AND source=?",
+            (user_id, kind, source),
+        ) as cursor:
+            row = await cursor.fetchone()
+        subscription_id = int(row["id"]) if row else 0
         await self.mark_seen(subscription_id, [item.thread_id for item in offers], commit=False)
         await self.db.commit()
         return subscription_id
+
+    async def find_subscription(self, user_id: int, kind: str, source: str) -> int | None:
+        async with self.db.execute(
+            "SELECT id FROM subscriptions WHERE telegram_user_id=? AND kind=? AND source=?",
+            (user_id, kind, source),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return int(row["id"]) if row else None
 
     async def mark_seen(self, subscription_id: int, ids: list[str], *, commit: bool = True) -> None:
         now = datetime.now(UTC).isoformat()
@@ -287,6 +351,8 @@ class Database:
             )
         else:
             active = 1 if action == "resume" else 0
+            if action == "resume" and not await self.can_add_subscription(user_id):
+                return False
             cursor = await self.db.execute(
                 "UPDATE subscriptions SET active=? WHERE id=? AND telegram_user_id=?",
                 (active, subscription_id, user_id),

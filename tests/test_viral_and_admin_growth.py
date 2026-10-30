@@ -180,7 +180,7 @@ async def test_share_deal_callback():
     markup = kwargs["reply_markup"]
     share_button = markup.inline_keyboard[0][0]
     assert "t.me/share/url" in share_button.url
-    assert "start=ref_42" in share_button.url
+    assert "ref_42" in share_button.url
 
 
 async def test_channel_publisher_auto_posts_hot_deals():

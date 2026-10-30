@@ -38,6 +38,8 @@ class TemporalConstraint(BaseModel):
     end_date: date | None = None
     month: int | None = Field(default=None, ge=1, le=12)
     year: int | None = Field(default=None, ge=2020, le=2100)
+    # Relative freshness ("today", "this week") is checked against published_at.
+    freshness_days: int | None = Field(default=None, ge=0, le=90)
     description: str | None = Field(default=None, max_length=80)
 
 
@@ -69,6 +71,8 @@ class SearchPlan(BaseModel):
     queries: list[PlannedQuery] = Field(min_length=1, max_length=8)
     min_price: float | None = None
     max_price: float | None = None
+    # Deterministic (no-LLM) plans are keyword searches: score them by query-token coverage.
+    keyword_mode: bool = False
 
 
 class GeminiPlannedQuery(BaseModel):

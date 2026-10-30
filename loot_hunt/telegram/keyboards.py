@@ -125,7 +125,7 @@ def result_keyboard(
     action_row = []
     if offers:
         action_row.append(
-            InlineKeyboardButton(text="📤 Поделиться", callback_data=f"share:{session_id}")
+            InlineKeyboardButton(text="📤 Поделиться", callback_data=f"share:{session_id}:{page}")
         )
     action_row.append(InlineKeyboardButton(text="🔎 Новый поиск", callback_data="new"))
     rows.append(action_row)

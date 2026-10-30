@@ -9,6 +9,9 @@ from loot_hunt.affiliate import AffiliateTransformer
 from loot_hunt.pepper.models import Offer
 from loot_hunt.platforms import get_platform
 
+TELEGRAM_TEXT_LIMIT = 4096
+NOTIFICATION_CHUNK_LIMIT = 3800
+
 
 def money(value: float, currency: str = "zł") -> str:
     formatted = f"{value:,.2f}".replace(",", " ").replace(".00", "")
@@ -51,7 +54,7 @@ def offer_card(offer: Offer, timezone: str, *, number: int | None = None) -> str
         f"<b>{html.escape(offer.title)}</b>",
     ]
     if offer.current_price is not None:
-        curr = offer.currency or "zł"
+        curr = html.escape(offer.currency or "zł")
         price = f"💰 <b>{money(offer.current_price, curr)}</b>"
         if offer.country != "PL" and offer.price_pln is not None:
             price += f" <i>(~{money(offer.price_pln, 'zł')})</i>"
@@ -61,7 +64,7 @@ def offer_card(offer: Offer, timezone: str, *, number: int | None = None) -> str
             price += f" · −{offer.discount:g}%"
         lines.append(price)
 
-    curr = offer.currency or "zł"
+    curr = html.escape(offer.currency or "zł")
     if offer.omnibus_price is not None:
         if offer.fair_discount_pct is not None and offer.fair_discount_pct > 0:
             omni_str = money(offer.omnibus_price, curr)
@@ -75,7 +78,7 @@ def offer_card(offer: Offer, timezone: str, *, number: int | None = None) -> str
             )
 
     if offer.specs:
-        spec_parts = [v for v in offer.specs.values() if v]
+        spec_parts = [html.escape(str(value)) for value in offer.specs.values() if value]
         if spec_parts:
             lines.append(f"⚙️ <b>ТТХ:</b> {' • '.join(spec_parts[:4])}")
 
@@ -133,3 +136,24 @@ def results_text(offers: list[Offer], total: int, page: int, timezone: str) -> s
         for index, item in enumerate(offers)
     ]
     return f"Найдено {total} активных предложений\n\n" + "\n\n".join(cards)
+
+
+def notification_chunks(
+    offers: list[Offer], timezone: str, *, limit: int = NOTIFICATION_CHUNK_LIMIT
+) -> list[str]:
+    """Group offer cards into Telegram-sized messages instead of one message per offer."""
+    chunks: list[str] = []
+    current = ""
+    for offer in offers:
+        card = offer_card(offer, timezone)
+        if len(card) > limit:
+            card = card[:limit]
+        candidate = f"{current}\n\n{card}" if current else card
+        if current and len(candidate) > limit:
+            chunks.append(current)
+            current = card
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks

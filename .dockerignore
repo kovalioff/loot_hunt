@@ -1,0 +1,17 @@
+.env
+.env.*
+.git
+.gitignore
+.venv
+.uv-cache
+.uv-python
+__pycache__
+*.py[cod]
+.pytest_cache
+.pytest-tmp
+.ruff_cache
+data
+*.db
+*.db-shm
+*.db-wal
+tests
