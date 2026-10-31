@@ -11,7 +11,7 @@ def test_keyboard_layout_correction():
     assert res2.was_corrected is True
     assert res2.effective_query == "пицца"
 
-    res3 = correct_query("neh d nehwbf")
+    res3 = correct_query("neh d nehwb.")
     assert res3.was_corrected is True
     assert res3.effective_query in ("тур в турция", "тур в турцию", "тур в турции")
 

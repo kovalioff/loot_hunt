@@ -132,7 +132,7 @@ def _airpods_version(text: str):
 
 
 def mismatch(query: str, title: str) -> str | None:
-    from .structural_relevance import evaluate_structural_relevance
+    from .structural_relevance import evaluate_structural_relevance, has_positive_marker
 
     struct_res = evaluate_structural_relevance(query, title)
     if struct_res.level == "IRRELEVANT":
@@ -145,7 +145,7 @@ def mismatch(query: str, title: str) -> str | None:
     if any(re.search(ACCESSORIES[name], normalized(title)) for name in forbidden):
         return "explicitly excluded accessory"
     actual = infer_intent(title)
-    if wanted.device and not wanted.accessory and CONTRACT.search(normalized(title)) and not CONTRACT.search(normalized(query)):
+    if wanted.device and not wanted.accessory and has_positive_marker(CONTRACT, normalized(title)) and not has_positive_marker(CONTRACT, normalized(query)):
         return "contract or subscription instead of standalone device"
     if wanted.accessory:
         if actual.accessory != wanted.accessory:

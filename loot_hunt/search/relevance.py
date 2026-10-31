@@ -558,10 +558,11 @@ def evaluate_offer(
 
     is_uncertain = struct_res.is_uncertain
     uncertainty_reasons = struct_res.uncertainty_reasons
-    if is_uncertain:
-        score = max(MIN_RELEVANCE_SCORE, score * 0.8)
-
     accepted = score >= MIN_RELEVANCE_SCORE
+    if is_uncertain:
+        # A ranking penalty must never promote an otherwise rejected candidate.
+        score *= 0.8
+
     return RelevanceResult(
         accepted,
         score,

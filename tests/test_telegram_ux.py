@@ -87,6 +87,27 @@ async def test_zero_result_search_creates_trackable_session():
     assert keyboard.inline_keyboard[0][0].callback_data == "ws:empty-session"
 
 
+async def test_uncertain_search_discloses_lack_of_confident_results():
+    plan = SearchPlan(original_query="ноутбук", queries=[PlannedQuery(query="laptop")])
+    offer = Offer("1", "Lenovo laptop")
+    search = SimpleNamespace(
+        search=AsyncMock(return_value=SearchResult(plan, [offer], has_confident_matches=False)),
+        page=SearchService.page,
+    )
+    database = SimpleNamespace(
+        upsert_offers=AsyncMock(), create_session=AsyncMock(return_value="session")
+    )
+    settings = SimpleNamespace(
+        admin_ids=frozenset(), timezone="Europe/Warsaw", search_session_ttl_seconds=600
+    )
+    status = SimpleNamespace(edit_text=AsyncMock())
+    message = SimpleNamespace(
+        text="ноутбук", from_user=SimpleNamespace(id=42), answer=AsyncMock(return_value=status)
+    )
+    await TelegramHandlers(settings, database, search, None).search_text(message)
+    assert "Точных совпадений пока нет" in status.edit_text.await_args.args[0]
+
+
 def test_category_result_keyboard_exposes_category_subscription():
     from loot_hunt.pepper.categories import PARENTS
     from loot_hunt.telegram.keyboards import categories_keyboard, result_keyboard
