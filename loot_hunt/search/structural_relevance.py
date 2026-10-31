@@ -183,7 +183,8 @@ CROSS_LINGUAL_SYNONYMS: dict[str, set[str]] = {
 # Rejection markers: defects, empty packaging, missing components, dummy units
 DEFECT_EMPTY_MARKERS = re.compile(
     r"\b(?:"
-    r"без\s+\w+|bez\s+\w+|ohne\s+\w+|without\s+\w+|"
+    r"(?:без\s+(?:наушник\w*|телефон\w*|ноутбук\w*)|bez\s+(?:sluchawek|telefonu|laptopa)|"
+    r"ohne\s+(?:kopfhorer|handy|laptop)|without\s+(?:headphones|phone|laptop))|"
     r"только\s+(?:коробка|бокс|кейс|упаковка|корпус)|пустая\s+коробка|samo\s+pudełko|samo\s+pudelko|leerkarton|nur\s+ovp|empty\s+box|only\s+box|"
     r"на\s+запчасти|uszkodzon\w*|defekt\w*|ersatzteil\w*|муляж\w*|пробник\w*|dummy|for\s+parts"
     r")\b",
@@ -221,7 +222,13 @@ BUNDLE_SUFFIX_PATTERN = re.compile(
     r")\b",
     re.IGNORECASE,
 )
-NEGATION_PREFIX = re.compile(r"(?:\b(?:без|bez|ohne|without|не)\s+)$", re.IGNORECASE)
+NEGATION_PREFIX = re.compile(r"(?:\b(?:без|bez|ohne|without|не|no|kein|keine|keinen)\s+)$", re.IGNORECASE)
+
+
+def has_positive_marker(pattern: re.Pattern, text: str) -> bool:
+    """Ignore negated markers such as 'ohne Vertrag' and 'bez abonamentu'."""
+    return any(not NEGATION_PREFIX.search(text[max(0, m.start() - 24):m.start()])
+               for m in pattern.finditer(text))
 
 
 @dataclass(frozen=True, slots=True)
@@ -435,8 +442,8 @@ def evaluate_structural_relevance(
     t_norm = t_decomp.normalized
 
     # 1. Defect / Empty packaging rejection (unless user explicitly searched for it)
-    if not DEFECT_EMPTY_MARKERS.search(q_norm):
-        if DEFECT_EMPTY_MARKERS.search(t_norm):
+    if not has_positive_marker(DEFECT_EMPTY_MARKERS, q_norm):
+        if has_positive_marker(DEFECT_EMPTY_MARKERS, t_norm):
             return StructuralResult(
                 level="IRRELEVANT",
                 score=0.0,
@@ -445,7 +452,7 @@ def evaluate_structural_relevance(
             )
 
     # 2. Contract / Subscription deals (e.g. mobile contract instead of device)
-    if not CONTRACT_MARKERS.search(q_norm) and CONTRACT_MARKERS.search(t_norm):
+    if not has_positive_marker(CONTRACT_MARKERS, q_norm) and has_positive_marker(CONTRACT_MARKERS, t_norm):
         return StructuralResult(
             level="IRRELEVANT",
             score=0.0,

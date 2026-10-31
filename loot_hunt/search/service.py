@@ -4,8 +4,6 @@ import asyncio
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 
-from typing import Any
-
 from loot_hunt.pepper.categories import PARENTS
 from loot_hunt.pepper.models import Offer
 from loot_hunt.platforms import Platform, get_platform
@@ -13,6 +11,7 @@ from loot_hunt.platforms import Platform, get_platform
 from .models import PlannedQuery, SearchPlan
 from .planner import SearchPlanner
 from .relevance import RelevanceResult, evaluate_offer, normalize
+from .spelling import CorrectionResult, correct_query
 
 CATEGORY_GROUP_IDS = {
     "electronics": "131",
@@ -63,6 +62,8 @@ class OfferDebug:
     hard_status: str
     temporal_status: str
     core_evidence: tuple[str, ...]
+    is_uncertain: bool = False
+    uncertainty_reasons: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -89,7 +90,7 @@ class SearchResult:
     offers: list[Offer]
     debug: SearchDebug | None = None
     has_confident_matches: bool = True
-    spelling: Any = None
+    spelling: CorrectionResult | None = None
 
 
 @dataclass(slots=True)
@@ -112,25 +113,26 @@ class SearchService:
         self.cap = min(30, max(5, cap))
 
     async def search(
-        self, text: str, *, platform: Platform | str = "pl"
+        self, text: str, *, platform: Platform | str = "pl", autocorrect: bool = True
     ) -> SearchResult:
-        from .spelling import correct_query
-
-        correction = correct_query(text)
+        correction = correct_query(text) if autocorrect else CorrectionResult(text, text, False)
         effective_query = correction.effective_query if correction.was_corrected else text
         target = get_platform(platform)
         try:
             plan = await self.planner.plan(effective_query, platform=target)
         except TypeError:
             plan = await self.planner.plan(effective_query)
-        if correction.was_corrected:
-            plan.original_query = text
+        # Evaluation and persisted subscriptions must use the same text as retrieval.
+        # The submitted text remains available in correction.original_query.
         offers, debug = await self._execute(plan, platform=target)
-        has_confident = len(offers) > 0 and any(
-            debug.offers.get(o.thread_id) and not getattr(debug.offers[o.thread_id], "is_uncertain", False)
-            for o in offers
-        ) if offers else False
-        return SearchResult(plan, offers, debug, has_confident_matches=has_confident, spelling=correction)
+        has_confident = any(
+            (detail := debug.offers.get(offer.thread_id)) is not None
+            and not detail.is_uncertain
+            for offer in offers
+        )
+        return SearchResult(
+            plan, offers, debug, has_confident_matches=has_confident, spelling=correction
+        )
 
     async def execute_plan(
         self, plan: SearchPlan, *, platform: Platform | str | None = None
@@ -454,6 +456,8 @@ class SearchService:
                 evaluation.hard_status,
                 evaluation.temporal_status,
                 evaluation.core_evidence,
+                evaluation.is_uncertain,
+                evaluation.uncertainty_reasons,
             )
 
     @staticmethod

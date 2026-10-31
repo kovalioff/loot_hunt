@@ -10,7 +10,6 @@ Zero-AI, high-performance module for RU, PL, DE, EN:
 from __future__ import annotations
 
 import re
-import unicodedata
 from dataclasses import dataclass
 
 # QWERTY <-> ЙЦУКЕН layout mapping
@@ -234,30 +233,29 @@ def damerau_levenshtein_distance(s1: str, s2: str) -> int:
 def fix_wrong_keyboard_layout(text: str) -> str | None:
     """Check if query was typed in the wrong keyboard layout (RU <-> EN)."""
     # 1. English to Russian layout (e.g. 'yjen,er' -> 'ноутбук', 'gbwwf' -> 'пицца')
-    has_cyrillic = bool(re.search(r"[а-яё]", text, re.IGNORECASE))
-    has_latin = bool(re.search(r"[a-z]", text, re.IGNORECASE))
-
-    if has_latin and not has_cyrillic:
-        # Candidate Russian translation
-        candidate = text.translate(EN_TO_RU_LAYOUT).lower()
-        # Check if words in candidate match Russian multi-domain vocabulary
-        cand_words = candidate.split()
-        if any(w in MULTI_DOMAIN_VOCABULARY for w in cand_words):
-            return candidate
-        # Common phrases: 'neh d nehwbf' -> 'тур в турцию'
-        if any(w in {"тур", "пицца", "ноутбук", "кофемашина", "наушники"} for w in cand_words):
-            return candidate
-
-    # 2. Russian to English layout (e.g. 'шзрщту' -> 'iphone', 'ьфсищщл' -> 'macbook', 'ыщтн' -> 'sony')
-    if has_cyrillic and not has_latin:
-        candidate = text.translate(RU_TO_EN_LAYOUT).lower()
-        cand_words = candidate.split()
-        if any(w in MULTI_DOMAIN_VOCABULARY for w in cand_words):
-            return candidate
-        if any(w in {"iphone", "macbook", "sony", "dyson", "dell", "asus", "nike"} for w in cand_words):
-            return candidate
-
-    return None
+    # Convert only recognized words; a valid brand or model in a mixed query
+    # must not be translated merely because another word has the wrong layout.
+    known = (
+        MULTI_DOMAIN_VOCABULARY | set(TRANSLITERATIONS)
+        | set(TRANSLITERATIONS.values()) | set(COMMON_VARIANTS)
+    )
+    parts = re.split(r"(\s+)", text)
+    changed = False
+    for index, token in enumerate(parts):
+        if not token.strip() or token.lower() in known or is_hardware_or_model_code(token):
+            continue
+        table = RU_TO_EN_LAYOUT if re.search(r"[а-яё]", token, re.IGNORECASE) else EN_TO_RU_LAYOUT
+        candidate = token.translate(table).lower()
+        recognized = candidate in known or correct_single_word_typo(candidate)
+        if candidate != token.lower() and recognized:
+            parts[index] = candidate
+            changed = True
+    if changed:
+        for index, token in enumerate(parts):
+            candidate = token.translate(EN_TO_RU_LAYOUT).lower()
+            if token.lower() not in known and candidate in {"в", "для", "до", "на", "с", "и", "от"}:
+                parts[index] = candidate
+    return "".join(parts) if changed else None
 
 
 def correct_single_word_typo(word: str) -> str | None:
@@ -277,7 +275,8 @@ def correct_single_word_typo(word: str) -> str | None:
     # Find closest match with Damerau-Levenshtein distance == 1
     best_match = None
     min_dist = 2
-    for vocab in MULTI_DOMAIN_VOCABULARY:
+    ambiguous = False
+    for vocab in sorted(MULTI_DOMAIN_VOCABULARY):
         # Length filter: must be within +/- 1 character
         if abs(len(vocab) - len(norm)) > 1:
             continue
@@ -288,8 +287,11 @@ def correct_single_word_typo(word: str) -> str | None:
         if dist < min_dist:
             min_dist = dist
             best_match = vocab
+            ambiguous = False
+        elif dist == min_dist:
+            ambiguous = True
 
-    return best_match if min_dist == 1 else None
+    return best_match if min_dist == 1 and not ambiguous else None
 
 
 def correct_query(query: str) -> CorrectionResult:
@@ -302,31 +304,24 @@ def correct_query(query: str) -> CorrectionResult:
         return CorrectionResult(raw, raw, False)
 
     # 1. Check wrong keyboard layout first
-    if layout_fixed := fix_wrong_keyboard_layout(raw):
-        # Continue checking the layout-fixed query for other typos
-        sub_res = correct_query(layout_fixed)
-        return CorrectionResult(
-            original_query=raw,
-            effective_query=sub_res.effective_query,
-            was_corrected=True,
-            did_you_mean=sub_res.effective_query,
-            reason="keyboard layout auto-corrected",
-        )
+    layout_fixed = fix_wrong_keyboard_layout(raw)
+    working = layout_fixed or raw
 
     # 2. Tokenize and examine each token
-    tokens = re.split(r"(\s+|[,\-!?;/]+)", raw)
     corrected_tokens = []
-    any_token_corrected = False
+    any_token_corrected = bool(layout_fixed)
 
     # Check multi-word transliterations first (e.g., 'сони плейстейшн' -> 'playstation')
-    lower_raw = raw.lower()
-    for phrase, replacement in TRANSLITERATIONS.items():
-        if " " in phrase and phrase in lower_raw:
-            lower_raw = re.sub(rf"\b{re.escape(phrase)}\b", replacement, lower_raw)
-            any_token_corrected = True
+    phrases = TRANSLITERATIONS | COMMON_VARIANTS
+    for phrase in sorted(phrases, key=len, reverse=True):
+        if " " in phrase:
+            working, count = re.subn(
+                rf"\b{re.escape(phrase)}\b", phrases[phrase], working, flags=re.IGNORECASE
+            )
+            any_token_corrected |= bool(count)
 
     # Re-tokenize potentially updated string
-    tokens = re.split(r"(\s+|[,\-!?;/]+)", lower_raw)
+    tokens = re.split(r"(\s+|[,!?;/]+)", working)
 
     for token in tokens:
         # Keep whitespace/separators as-is
